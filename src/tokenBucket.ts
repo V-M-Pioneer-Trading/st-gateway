@@ -1,12 +1,35 @@
+export type Priority = "interactive" | "background";
+
+interface Waiter {
+  priority: Priority;
+  resolve: () => void;
+  enqueuedAt: number;
+}
+
+interface LatencyStats {
+  count: number;
+  totalMs: number;
+  maxMs: number;
+}
+
+export interface QueueMetrics {
+  depth: number;
+  latencyMs: { count: number; avg: number; max: number };
+}
+
+const emptyStats = (): LatencyStats => ({ count: 0, totalMs: 0, maxMs: 0 });
+
 /**
  * Token bucket shared by every request the gateway sends upstream: refills at
- * `rps` tokens per second up to `burst` capacity, and hands tokens out FIFO so
- * a flood of background callers cannot starve earlier waiters.
+ * `rps` tokens per second up to `burst` capacity. Two FIFO queues — interactive
+ * and background — share the budget; interactive is always drained first so UI
+ * traffic stays responsive while background autopilot traffic saturates the rest.
  */
 export class TokenBucket {
   private tokens: number;
   private lastRefill: number;
-  private queue: (() => void)[] = [];
+  private queues: Record<Priority, Waiter[]> = { interactive: [], background: [] };
+  private stats: Record<Priority, LatencyStats> = { interactive: emptyStats(), background: emptyStats() };
   private timer: NodeJS.Timeout | null = null;
 
   constructor(private rps: number, private burst: number) {
@@ -17,11 +40,22 @@ export class TokenBucket {
     this.lastRefill = Date.now();
   }
 
-  acquire(): Promise<void> {
+  acquire(priority: Priority = "background"): Promise<void> {
     return new Promise((resolve) => {
-      this.queue.push(resolve);
+      this.queues[priority].push({ priority, resolve, enqueuedAt: Date.now() });
       this.drain();
     });
+  }
+
+  getMetrics(): Record<Priority, QueueMetrics> {
+    const metricsFor = (priority: Priority): QueueMetrics => {
+      const s = this.stats[priority];
+      return {
+        depth: this.queues[priority].length,
+        latencyMs: { count: s.count, avg: s.count > 0 ? s.totalMs / s.count : 0, max: s.maxMs },
+      };
+    };
+    return { interactive: metricsFor("interactive"), background: metricsFor("background") };
   }
 
   private refill() {
@@ -30,13 +64,30 @@ export class TokenBucket {
     this.lastRefill = now;
   }
 
+  private nextWaiter(): Waiter | null {
+    return this.queues.interactive.shift() ?? this.queues.background.shift() ?? null;
+  }
+
+  private queueLength(): number {
+    return this.queues.interactive.length + this.queues.background.length;
+  }
+
   private drain() {
     this.refill();
-    while (this.queue.length > 0 && this.tokens >= 1) {
+    while (this.tokens >= 1) {
+      const waiter = this.nextWaiter();
+      if (waiter === null) break;
       this.tokens -= 1;
-      this.queue.shift()!();
+
+      const latencyMs = Date.now() - waiter.enqueuedAt;
+      const stats = this.stats[waiter.priority];
+      stats.count += 1;
+      stats.totalMs += latencyMs;
+      stats.maxMs = Math.max(stats.maxMs, latencyMs);
+
+      waiter.resolve();
     }
-    if (this.queue.length > 0 && this.timer === null) {
+    if (this.queueLength() > 0 && this.timer === null) {
       const msUntilNextToken = Math.max(((1 - this.tokens) / this.rps) * 1000, 1);
       this.timer = setTimeout(() => {
         this.timer = null;

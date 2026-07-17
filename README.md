@@ -22,10 +22,20 @@ fleet-service is meant to flow through this proxy so the whole system shares
   OPTIONS): a POST that may already have executed a purchase upstream is
   never replayed. Non-retryable statuses (401, 404, …) pass through
   unchanged, including `Retry-After`/`x-ratelimit-*` pacing headers.
+- **Priority classes**: callers set `X-Priority: interactive` on a `/proxy`
+  request to jump the queue ahead of unmarked (background) traffic — the UI
+  stays responsive while autopilot saturates the rate budget. Requests
+  without the header are background; there is no default promotion. This is
+  a trust boundary, not an auth boundary: any caller that can reach `/proxy`
+  can self-declare interactive, and draining is strict (interactive always
+  goes first, no fairness cap), so sustained interactive load can starve
+  background traffic. Acceptable because only the three internal services
+  call the gateway ([meta#7](https://github.com/V-M-Pioneer-Trading/meta/issues/7)),
+  not untrusted clients — revisit if that changes.
+- **Observability**: `GET /metrics` returns per-class queue depth and wait
+  latency (count/avg/max), so it's visible when the rate budget is the
+  bottleneck.
 - `GET /health` liveness endpoint.
-
-Priority classes (interactive > background) and queue observability are the
-next slice ([meta#6](https://github.com/V-M-Pioneer-Trading/meta/issues/6)).
 
 ## Configuration
 
@@ -41,6 +51,12 @@ next slice ([meta#6](https://github.com/V-M-Pioneer-Trading/meta/issues/6)).
 
 Invalid numeric values fail startup with a clear error instead of hanging the
 proxy at runtime.
+
+## Endpoints
+
+- `GET /health` — `{ status: "ok" }`
+- `GET /metrics` — `{ queues: { interactive, background }: { depth, latencyMs: { count, avg, max } } }`
+- `ANY /proxy/<spacetraders-path>` — proxied SpaceTraders call
 
 ## Develop
 

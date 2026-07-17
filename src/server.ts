@@ -1,6 +1,6 @@
 import express from "express";
 import { GatewayConfig, configFromEnv } from "./config";
-import { TokenBucket } from "./tokenBucket";
+import { Priority, TokenBucket } from "./tokenBucket";
 
 const RETRYABLE_5XX = new Set([500, 502, 503, 504]);
 /** Upstream response headers worth passing back — pacing signals callers need. */
@@ -29,6 +29,10 @@ export function createApp(config: GatewayConfig = configFromEnv()) {
     res.json({ status: "ok" });
   });
 
+  app.get("/metrics", (_req, res) => {
+    res.json({ queues: bucket.getMetrics() });
+  });
+
   // Raw body: the gateway forwards payloads verbatim and never parses them.
   app.use("/proxy", express.raw({ type: "*/*", limit: "5mb" }), async (req, res) => {
     const url = `${config.spaceTradersBaseUrl}${req.url}`;
@@ -42,6 +46,13 @@ export function createApp(config: GatewayConfig = configFromEnv()) {
     // those are only retried for methods without side effects — at-most-once for
     // POSTs (purchases, sells) is worth more than a transparent retry.
     const sideEffectFree = req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS";
+    // Callers declare their priority class; anything unmarked is background so a
+    // missing header degrades to "no special treatment" rather than jumping the
+    // queue by default.
+    // req.header() comma-joins duplicate headers per RFC 7230; split defensively
+    // so a caller/proxy that appends rather than sets X-Priority still resolves.
+    const priorityHeader = req.header("X-Priority")?.split(",")[0]?.trim();
+    const priority: Priority = priorityHeader === "interactive" ? "interactive" : "background";
 
     let lastError: unknown = null;
     for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
@@ -50,7 +61,7 @@ export function createApp(config: GatewayConfig = configFromEnv()) {
       // body stream (Node autoDestroy), not just disconnects.
       if (res.socket === null || res.socket.destroyed) return;
 
-      await bucket.acquire();
+      await bucket.acquire(priority);
       let upstream: Response | null = null;
       try {
         upstream = await fetch(url, {
