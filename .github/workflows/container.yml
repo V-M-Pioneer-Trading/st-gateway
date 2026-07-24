@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 jobs:
   test:
@@ -58,3 +59,20 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::543292785457:role/github-actions-ssm-deploy
+          aws-region: eu-central-1
+
+      # st-gateway has no Terraform stack of its own — it's bootstrapped
+      # inside agent-service's SSM document (see meta/docs/operations.md,
+      # "Backend hosting"). Triggering this document also restarts
+      # agent-service's MySQL container as a side effect.
+      - name: Trigger redeploy on shared host
+        run: |
+          aws ssm send-command \
+            --document-name "agent-service-bootstrap-i-011b6b82a9072a385" \
+            --targets "Key=InstanceIds,Values=i-011b6b82a9072a385" \
+            --region eu-central-1

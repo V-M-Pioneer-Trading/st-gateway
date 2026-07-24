@@ -25,9 +25,11 @@ export function createApp(config: GatewayConfig = configFromEnv()) {
   const app = express();
   const bucket = new TokenBucket(config.rateLimitRps, config.rateLimitBurst);
 
-  app.get("/health", (_req, res) => {
+  const health = (_req: express.Request, res: express.Response) => {
     res.json({ status: "ok" });
-  });
+  };
+  app.get("/health", health);
+  app.get("/api/st-gateway/health", health);
 
   app.get("/metrics", (_req, res) => {
     res.json({ queues: bucket.getMetrics() });

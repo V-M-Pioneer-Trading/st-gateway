@@ -269,8 +269,8 @@ describe("st-gateway proxy", () => {
     expect(fake.requests).toHaveLength(0);
   });
 
-  it("exposes a health endpoint", async () => {
-    const res = await request(app()).get("/health");
+  it.each(["/health", "/api/st-gateway/health"])("exposes a health endpoint at %s", async (path) => {
+    const res = await request(app()).get(path);
     expect(res.status).toBe(200);
   });
 });
