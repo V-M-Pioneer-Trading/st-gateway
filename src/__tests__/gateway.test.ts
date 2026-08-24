@@ -3,6 +3,8 @@ import { AddressInfo } from "net";
 import request from "supertest";
 import { createApp } from "../server";
 import { configFromEnv } from "../config";
+import { FakeAuthService, TEST_AUTH_SERVICE_SHARED_SECRET } from "../testSupport/fakeAuthService";
+import { TEST_CLERK_JWT_KEY } from "../testSupport/authTokens";
 
 /**
  * In-process fake SpaceTraders API. Records every request (path, method,
@@ -66,14 +68,19 @@ class FakeSpaceTraders {
 describe("st-gateway proxy", () => {
   let fake: FakeSpaceTraders;
   let baseUrl: string;
+  let authService: FakeAuthService;
+  let authServiceUrl: string;
 
   beforeEach(async () => {
     fake = new FakeSpaceTraders();
     baseUrl = await fake.start();
+    authService = new FakeAuthService();
+    authServiceUrl = await authService.start();
   });
 
   afterEach(async () => {
     await fake.stop();
+    await authService.stop();
   });
 
   const app = (overrides: Partial<Parameters<typeof createApp>[0]> = {}) =>
@@ -84,22 +91,29 @@ describe("st-gateway proxy", () => {
       maxRetries: 3,
       retryBaseMs: 5,
       maxRetryDelayMs: 30_000,
+      authServiceUrl,
+      authServiceSharedSecret: TEST_AUTH_SERVICE_SHARED_SECRET,
+      authServiceTokenCacheMs: 30_000,
+      clerkJwtKeyPem: TEST_CLERK_JWT_KEY,
+      clerkIssuer: null,
       ...overrides,
     });
 
-  it("forwards a GET with Authorization and query string, returning the upstream body and status", async () => {
+  it("forwards a GET's query string and injects the credential fetched from auth-service", async () => {
     fake.respondWith({ status: 200, body: JSON.stringify({ data: { symbol: "X1-TEST" } }) });
 
     const res = await request(app())
       .get("/proxy/my/ships?page=2&limit=10")
-      .set("Authorization", "Bearer test-token");
+      .set("Authorization", "Bearer whatever-the-caller-sent");
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ data: { symbol: "X1-TEST" } });
     expect(fake.requests).toHaveLength(1);
     expect(fake.requests[0].method).toBe("GET");
     expect(fake.requests[0].url).toBe("/my/ships?page=2&limit=10");
-    expect(fake.requests[0].authorization).toBe("Bearer test-token");
+    // Injected (decision 5), not the caller's own header — see
+    // injection.test.ts for the dedicated coverage of this behavior.
+    expect(fake.requests[0].authorization).toBe("Bearer fake-agent-token");
   });
 
   it("forwards a POST body verbatim", async () => {
