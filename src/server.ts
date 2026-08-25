@@ -60,6 +60,20 @@ export function createApp(config: GatewayConfig) {
     // refreshes that token, a cycle for no reason.
     const isUnauthenticatedRoot = req.method === "GET" && req.url === "/";
 
+    // POST /register is the other exception, and it inverts the rule: it
+    // authenticates with the *account* token, which only auth-service holds
+    // and which this gateway never sees otherwise. So the caller's own
+    // Authorization is forwarded verbatim and nothing is injected.
+    //
+    // Injecting here instead would deadlock the system in both directions:
+    // registration would carry the agent token rather than the account token
+    // and fail, and while auth-service is UNCONFIGURED there is no agent
+    // token at all, so the call would 503 — making it impossible to ever
+    // leave UNCONFIGURED. It would also permanently break decision 7's
+    // automatic re-registration after an observed wipe, which is the single
+    // thing auth-service exists to do unattended.
+    const isRegistration = req.method === "POST" && req.url === "/register";
+
     // A 429 means SpaceTraders did NOT execute the request, so it is always safe
     // to retry. 5xx/network failures may have executed a mutation upstream, so
     // those are only retried for methods without side effects — at-most-once for
@@ -71,7 +85,10 @@ export function createApp(config: GatewayConfig) {
     // increment 3 Stage 5 forwards a real Clerk token here).
     const priority = await priorityDeriver.derive(req.header("Authorization"));
 
-    if (!isUnauthenticatedRoot) {
+    if (isRegistration) {
+      const forwarded = req.header("Authorization");
+      if (forwarded !== undefined) headers.Authorization = forwarded;
+    } else if (!isUnauthenticatedRoot) {
       const token = await authTokenClient.getToken();
       if (token === null) {
         res.status(503).json({ error: { message: "SpaceTraders credential not configured" } });
@@ -103,7 +120,11 @@ export function createApp(config: GatewayConfig) {
       // 7's "a 401 forces an immediate, out-of-cycle poll", not a rate/5xx
       // condition. Safe to retry regardless of method: SpaceTraders rejects
       // bad auth before any mutation logic runs, so no side effect occurred.
-      const isAuthFailure = !isUnauthenticatedRoot && upstream !== null && upstream.status === 401;
+      // Registration is excluded: a 401 there means the *caller's* account
+      // token was rejected, so refetching our agent token would neither
+      // explain nor fix it — and retrying would re-attempt a mutation.
+      const isAuthFailure =
+        !isUnauthenticatedRoot && !isRegistration && upstream !== null && upstream.status === 401;
       const retryable =
         upstream === null
           ? sideEffectFree

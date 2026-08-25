@@ -103,6 +103,52 @@ describe("st-gateway credential injection (auth-design.md decision 5)", () => {
     expect(authService.requests).toHaveLength(0);
   });
 
+  // POST /register inverts the injection rule: it authenticates with the
+  // *account* token, which only auth-service holds. Injecting the agent token
+  // here would break registration outright, and — because an UNCONFIGURED
+  // auth-service has no agent token to inject — would make it impossible to
+  // ever leave UNCONFIGURED, or to recover automatically after a wipe.
+  it("forwards the caller's account token on POST /register instead of injecting", async () => {
+    authService.respondWith(200, { agentToken: "injected-token" });
+
+    const res = await request(app())
+      .post("/proxy/register")
+      .set("Authorization", "Bearer account-token")
+      .send({ symbol: "TESTAGENT", faction: "COSMIC" });
+
+    expect(res.status).toBe(200);
+    expect(fake.requests[0].authorization).toBe("Bearer account-token");
+    expect(authService.requests).toHaveLength(0);
+  });
+
+  it("still registers while auth-service is UNCONFIGURED — the bootstrap path must not 503", async () => {
+    authService.respondWith(503, { error: { message: "no agent token configured" } });
+
+    const res = await request(app())
+      .post("/proxy/register")
+      .set("Authorization", "Bearer account-token")
+      .send({ symbol: "TESTAGENT", faction: "COSMIC" });
+
+    expect(res.status).toBe(200);
+    expect(fake.requests[0].authorization).toBe("Bearer account-token");
+  });
+
+  it("does not refetch the agent token when registration itself returns 401", async () => {
+    authService.respondWith(200, { agentToken: "injected-token" });
+    fake.respondWith({ status: 401, body: JSON.stringify({ error: "bad account token" }) });
+
+    const res = await request(app())
+      .post("/proxy/register")
+      .set("Authorization", "Bearer wrong-account-token")
+      .send({ symbol: "TESTAGENT", faction: "COSMIC" });
+
+    expect(res.status).toBe(401);
+    // One attempt only: a 401 here is the caller's account token being
+    // rejected, not a stale injected token, so retrying would re-attempt a
+    // mutation for no reason.
+    expect(fake.requests).toHaveLength(1);
+  });
+
   it("returns 503 without calling SpaceTraders when auth-service has no token (UNCONFIGURED)", async () => {
     authService.respondWith(503, { error: { message: "no agent token configured" } });
 
