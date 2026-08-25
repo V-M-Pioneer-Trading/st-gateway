@@ -14,7 +14,8 @@
     "test": "jest"
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "jose": "^5.10.0"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",

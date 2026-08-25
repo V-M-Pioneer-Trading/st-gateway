@@ -2,6 +2,8 @@ import http from "http";
 import { AddressInfo } from "net";
 import request from "supertest";
 import { createApp } from "../server";
+import { FakeAuthService, TEST_AUTH_SERVICE_SHARED_SECRET } from "../testSupport/fakeAuthService";
+import { TEST_CLERK_JWT_KEY, userBearer } from "../testSupport/authTokens";
 
 /** Same fake SpaceTraders API as gateway.test.ts, kept local to avoid a shared-fixture seam. */
 class FakeSpaceTraders {
@@ -46,14 +48,19 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 describe("st-gateway priority classes and observability", () => {
   let fake: FakeSpaceTraders;
   let baseUrl: string;
+  let authService: FakeAuthService;
+  let authServiceUrl: string;
 
   beforeEach(async () => {
     fake = new FakeSpaceTraders();
     baseUrl = await fake.start();
+    authService = new FakeAuthService();
+    authServiceUrl = await authService.start();
   });
 
   afterEach(async () => {
     await fake.stop();
+    await authService.stop();
   });
 
   const app = () =>
@@ -64,22 +71,26 @@ describe("st-gateway priority classes and observability", () => {
       maxRetries: 0,
       retryBaseMs: 5,
       maxRetryDelayMs: 30_000,
+      authServiceUrl,
+      authServiceSharedSecret: TEST_AUTH_SERVICE_SHARED_SECRET,
+      authServiceTokenCacheMs: 30_000,
+      clerkJwtKeyPem: TEST_CLERK_JWT_KEY,
+      clerkIssuer: null,
     });
 
-  it("serves an interactive request ahead of background requests queued before it", async () => {
+  it("serves a request carrying a verified human session ahead of background requests queued before it", async () => {
     const gateway = app();
 
     // Burst of 1 lets the first request through immediately, queueing the rest
     // at 5/s (200ms apart) — plenty of room to insert the interactive request.
     const background = Array.from({ length: 4 }, (_, i) =>
-      request(gateway).get(`/proxy/my/agent?bg=${i}`).set("Authorization", "Bearer t")
+      request(gateway).get(`/proxy/my/agent?bg=${i}`).set("Authorization", "Bearer opaque-caller-token")
     );
 
     await sleep(30); // let the background requests reach the gateway and queue
     const interactive = request(gateway)
       .get("/proxy/my/agent?priority=interactive")
-      .set("Authorization", "Bearer t")
-      .set("X-Priority", "interactive");
+      .set("Authorization", userBearer());
 
     await Promise.all([...background, interactive]);
 
@@ -92,14 +103,14 @@ describe("st-gateway priority classes and observability", () => {
     expect(interactiveIndex).toBeLessThanOrEqual(1);
   });
 
-  it("treats requests without X-Priority as background", async () => {
+  it("treats requests without a verified session as background", async () => {
     const gateway = app();
 
     const background = Array.from({ length: 3 }, (_, i) =>
-      request(gateway).get(`/proxy/my/agent?bg=${i}`).set("Authorization", "Bearer t")
+      request(gateway).get(`/proxy/my/agent?bg=${i}`).set("Authorization", "Bearer opaque-caller-token")
     );
     await sleep(30);
-    const unmarked = request(gateway).get("/proxy/my/agent?unmarked=1").set("Authorization", "Bearer t");
+    const unmarked = request(gateway).get("/proxy/my/agent?unmarked=1").set("Authorization", "Bearer opaque-caller-token");
 
     await Promise.all([...background, unmarked]);
 
@@ -109,17 +120,36 @@ describe("st-gateway priority classes and observability", () => {
     expect(unmarkedIndex).toBe(arrivalOrder.length - 1);
   });
 
+  // decision 2's whole point: X-Priority is no longer a trust signal, so
+  // self-declaring it must have zero effect — otherwise any caller (soon
+  // including anonymous ones, decision 3) can still jump the queue for free.
+  it("ignores a self-declared X-Priority: interactive header entirely", async () => {
+    const gateway = app();
+
+    const background = Array.from({ length: 3 }, (_, i) =>
+      request(gateway).get(`/proxy/my/agent?bg=${i}`).set("Authorization", "Bearer opaque-caller-token")
+    );
+    await sleep(30);
+    const spoofed = request(gateway)
+      .get("/proxy/my/agent?spoofed=1")
+      .set("Authorization", "Bearer opaque-caller-token")
+      .set("X-Priority", "interactive");
+
+    await Promise.all([...background, spoofed]);
+
+    const arrivalOrder = fake.requests.map((r) => r.url);
+    const spoofedIndex = arrivalOrder.findIndex((u) => u.includes("spoofed=1"));
+    expect(spoofedIndex).toBe(arrivalOrder.length - 1);
+  });
+
   it("exposes queue depth and latency per priority class via /metrics", async () => {
     const gateway = app();
     fake.respondAfter(50);
 
     const inFlight = Promise.all([
-      request(gateway).get("/proxy/my/agent?a=1").set("Authorization", "Bearer t"),
-      request(gateway)
-        .get("/proxy/my/agent?a=2")
-        .set("Authorization", "Bearer t")
-        .set("X-Priority", "interactive"),
-      request(gateway).get("/proxy/my/agent?a=3").set("Authorization", "Bearer t"),
+      request(gateway).get("/proxy/my/agent?a=1").set("Authorization", "Bearer opaque-caller-token"),
+      request(gateway).get("/proxy/my/agent?a=2").set("Authorization", userBearer()),
+      request(gateway).get("/proxy/my/agent?a=3").set("Authorization", "Bearer opaque-caller-token"),
     ]);
 
     await sleep(20); // requests queued but not yet all dispatched
