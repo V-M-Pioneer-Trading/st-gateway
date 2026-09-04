@@ -20,10 +20,11 @@
  * from.
  *
  * KNOWN GAP (tracked for increment 3 Stage 5): none of the four calling
- * services currently forward their own Clerk token to st-gateway — they
- * forward the SpaceTraders game token instead (soon to stop, once injection
- * lands) via the same Authorization header this reads. Until Stage 5 changes
- * that, every request's Authorization header fails verification here and
+ * services currently forward their own Clerk token to st-gateway — they still
+ * send the SpaceTraders game token, on the same Authorization header this
+ * reads. Injection has since landed, so that token is now ignored on game
+ * calls rather than forwarded; it is still what arrives here. Until Stage 5
+ * changes that, every request's Authorization header fails verification and
  * every request — including genuinely interactive dashboard traffic —
  * resolves to "background". This is an accepted interim UX regression, not a
  * bug: shipping the verification now closes the priority-spoofing gap

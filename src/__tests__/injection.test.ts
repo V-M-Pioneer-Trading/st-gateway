@@ -1,106 +1,35 @@
-import http from "http";
-import { AddressInfo } from "net";
 import request from "supertest";
-import { createApp } from "../server";
-import { FakeAuthService, TEST_AUTH_SERVICE_SHARED_SECRET } from "../testSupport/fakeAuthService";
-import { TEST_CLERK_JWT_KEY } from "../testSupport/authTokens";
-
-/** Same fake SpaceTraders API shape as gateway.test.ts, kept local. */
-class FakeSpaceTraders {
-  server: http.Server;
-  requests: { method: string; url: string; authorization?: string }[] = [];
-  private responses: { status: number; body: string }[] = [{ status: 200, body: JSON.stringify({ data: "ok" }) }];
-
-  constructor() {
-    this.server = http.createServer((req, res) => {
-      let body = "";
-      req.on("data", (c) => (body += c));
-      req.on("end", () => {
-        this.requests.push({ method: req.method ?? "", url: req.url ?? "", authorization: req.headers.authorization });
-        const next = this.responses.length > 1 ? this.responses.shift()! : this.responses[0];
-        res.writeHead(next.status, { "Content-Type": "application/json" });
-        res.end(next.body);
-      });
-    });
-  }
-
-  respondWith(...responses: { status: number; body: string }[]) {
-    this.responses = responses;
-  }
-
-  async start(): Promise<string> {
-    await new Promise<void>((resolve) => this.server.listen(0, resolve));
-    const { port } = this.server.address() as AddressInfo;
-    return `http://127.0.0.1:${port}`;
-  }
-
-  async stop() {
-    await new Promise<void>((resolve, reject) => this.server.close((err) => (err ? reject(err) : resolve())));
-  }
-}
+import { useHarness } from "../testSupport/gatewayHarness";
 
 describe("st-gateway credential injection (auth-design.md decision 5)", () => {
-  let fake: FakeSpaceTraders;
-  let baseUrl: string;
-  let authService: FakeAuthService;
-  let authServiceUrl: string;
-
-  beforeEach(async () => {
-    fake = new FakeSpaceTraders();
-    baseUrl = await fake.start();
-    authService = new FakeAuthService();
-    authServiceUrl = await authService.start();
-  });
-
-  afterEach(async () => {
-    await fake.stop();
-    await authService.stop();
-  });
-
-  const app = (overrides: Partial<Parameters<typeof createApp>[0]> = {}) =>
-    createApp({
-      spaceTradersBaseUrl: baseUrl,
-      rateLimitRps: 100,
-      rateLimitBurst: 100,
-      maxRetries: 3,
-      retryBaseMs: 5,
-      maxRetryDelayMs: 30_000,
-      authServiceUrl,
-      authServiceSharedSecret: TEST_AUTH_SERVICE_SHARED_SECRET,
-      authServiceTokenCacheMs: 30_000,
-      clerkJwtKeyPem: TEST_CLERK_JWT_KEY,
-      clerkIssuer: null,
-      ...overrides,
-    });
+  const gw = useHarness();
 
   it("injects the agent token fetched from auth-service, ignoring whatever the caller sent", async () => {
-    authService.respondWith(200, { agentToken: "injected-token" });
+    gw.authService.respondWith({ status: 200, body: { agentToken: "injected-token" } });
 
-    const res = await request(app())
-      .get("/proxy/my/ships")
-      .set("Authorization", "Bearer whatever-the-caller-sent");
+    const res = await request(gw.app()).get("/proxy/my/ships").set("Authorization", "Bearer whatever-the-caller-sent");
 
     expect(res.status).toBe(200);
-    expect(fake.requests[0].authorization).toBe("Bearer injected-token");
-    expect(authService.requests[0].secret).toBe(TEST_AUTH_SERVICE_SHARED_SECRET);
+    expect(gw.spaceTraders.requests[0].authorization).toBe("Bearer injected-token");
+    expect(gw.authService.requests[0].secret).toBe("test-auth-service-secret");
   });
 
   it("caches the token across requests within the TTL instead of calling auth-service every time", async () => {
-    const gateway = app({ authServiceTokenCacheMs: 60_000 });
+    const gateway = gw.app({ authServiceTokenCacheMs: 60_000 });
 
     await request(gateway).get("/proxy/my/ships").set("Authorization", "Bearer x");
     await request(gateway).get("/proxy/my/agent").set("Authorization", "Bearer x");
 
-    expect(authService.requests).toHaveLength(1);
-    expect(fake.requests).toHaveLength(2);
+    expect(gw.authService.requests).toHaveLength(1);
+    expect(gw.spaceTraders.requests).toHaveLength(2);
   });
 
   it("does not inject anything on GET / — the one unauthenticated SpaceTraders endpoint", async () => {
-    const res = await request(app()).get("/proxy/");
+    const res = await request(gw.app()).get("/proxy/");
 
     expect(res.status).toBe(200);
-    expect(fake.requests[0].authorization).toBeUndefined();
-    expect(authService.requests).toHaveLength(0);
+    expect(gw.spaceTraders.requests[0].authorization).toBeUndefined();
+    expect(gw.authService.requests).toHaveLength(0);
   });
 
   // POST /register inverts the injection rule: it authenticates with the
@@ -109,35 +38,35 @@ describe("st-gateway credential injection (auth-design.md decision 5)", () => {
   // auth-service has no agent token to inject — would make it impossible to
   // ever leave UNCONFIGURED, or to recover automatically after a wipe.
   it("forwards the caller's account token on POST /register instead of injecting", async () => {
-    authService.respondWith(200, { agentToken: "injected-token" });
+    gw.authService.respondWith({ status: 200, body: { agentToken: "injected-token" } });
 
-    const res = await request(app())
+    const res = await request(gw.app())
       .post("/proxy/register")
       .set("Authorization", "Bearer account-token")
       .send({ symbol: "TESTAGENT", faction: "COSMIC" });
 
     expect(res.status).toBe(200);
-    expect(fake.requests[0].authorization).toBe("Bearer account-token");
-    expect(authService.requests).toHaveLength(0);
+    expect(gw.spaceTraders.requests[0].authorization).toBe("Bearer account-token");
+    expect(gw.authService.requests).toHaveLength(0);
   });
 
   it("still registers while auth-service is UNCONFIGURED — the bootstrap path must not 503", async () => {
-    authService.respondWith(503, { error: { message: "no agent token configured" } });
+    gw.authService.respondWith({ status: 503, body: { error: { message: "no agent token configured" } } });
 
-    const res = await request(app())
+    const res = await request(gw.app())
       .post("/proxy/register")
       .set("Authorization", "Bearer account-token")
       .send({ symbol: "TESTAGENT", faction: "COSMIC" });
 
     expect(res.status).toBe(200);
-    expect(fake.requests[0].authorization).toBe("Bearer account-token");
+    expect(gw.spaceTraders.requests[0].authorization).toBe("Bearer account-token");
   });
 
   it("does not refetch the agent token when registration itself returns 401", async () => {
-    authService.respondWith(200, { agentToken: "injected-token" });
-    fake.respondWith({ status: 401, body: JSON.stringify({ error: "bad account token" }) });
+    gw.authService.respondWith({ status: 200, body: { agentToken: "injected-token" } });
+    gw.spaceTraders.respondWith({ status: 401, body: JSON.stringify({ error: "bad account token" }) });
 
-    const res = await request(app())
+    const res = await request(gw.app())
       .post("/proxy/register")
       .set("Authorization", "Bearer wrong-account-token")
       .send({ symbol: "TESTAGENT", faction: "COSMIC" });
@@ -146,42 +75,32 @@ describe("st-gateway credential injection (auth-design.md decision 5)", () => {
     // One attempt only: a 401 here is the caller's account token being
     // rejected, not a stale injected token, so retrying would re-attempt a
     // mutation for no reason.
-    expect(fake.requests).toHaveLength(1);
+    expect(gw.spaceTraders.requests).toHaveLength(1);
   });
 
   it("returns 503 without calling SpaceTraders when auth-service has no token (UNCONFIGURED)", async () => {
-    authService.respondWith(503, { error: { message: "no agent token configured" } });
+    gw.authService.respondWith({ status: 503, body: { error: { message: "no agent token configured" } } });
 
-    const res = await request(app()).get("/proxy/my/ships").set("Authorization", "Bearer x");
-
-    expect(res.status).toBe(503);
-    expect(fake.requests).toHaveLength(0);
-  });
-
-  it("returns 503 when auth-service is unreachable", async () => {
-    const gateway = app({ authServiceUrl: "http://127.0.0.1:1" });
-
-    const res = await request(gateway).get("/proxy/my/ships").set("Authorization", "Bearer x");
+    const res = await request(gw.app()).get("/proxy/my/ships").set("Authorization", "Bearer x");
 
     expect(res.status).toBe(503);
-    expect(fake.requests).toHaveLength(0);
+    expect(gw.spaceTraders.requests).toHaveLength(0);
   });
 
   it("on a 401, forces an out-of-cycle refresh and retries with the new token", async () => {
     // One long-lived gateway so the token cache carries across both requests
     // below — the whole point is proving a *cached* (now-stale) token gets
     // replaced, not that a fresh fetch happens to get it right.
-    const gateway = app({ authServiceTokenCacheMs: 60_000 });
+    const gateway = gw.app({ authServiceTokenCacheMs: 60_000 });
 
-    authService.respondWith(200, { agentToken: "stale-token" });
-    fake.respondWith({ status: 200, body: JSON.stringify({ data: "ok" }) });
+    gw.authService.respondWith({ status: 200, body: { agentToken: "stale-token" } });
     await request(gateway).get("/proxy/my/ships").set("Authorization", "Bearer x");
-    expect(fake.requests[0].authorization).toBe("Bearer stale-token");
+    expect(gw.spaceTraders.requests[0].authorization).toBe("Bearer stale-token");
 
     // Simulate the token having gone bad server-side (e.g. Restore Token ran)
     // without the gateway's cache knowing yet.
-    authService.respondWith(200, { agentToken: "fresh-token" });
-    fake.respondWith(
+    gw.authService.respondWith({ status: 200, body: { agentToken: "fresh-token" } });
+    gw.spaceTraders.respondWith(
       { status: 401, body: JSON.stringify({ error: { message: "invalid token" } }) },
       { status: 200, body: JSON.stringify({ data: "recovered" }) },
     );
@@ -189,23 +108,149 @@ describe("st-gateway credential injection (auth-design.md decision 5)", () => {
     const res = await request(gateway).get("/proxy/my/agent").set("Authorization", "Bearer x");
 
     expect(res.status).toBe(200);
-    expect(fake.requests[fake.requests.length - 1].authorization).toBe("Bearer fresh-token");
-    expect(authService.requests.some((r) => r.url.includes("afterUnauthorized=true"))).toBe(true);
+    expect(gw.spaceTraders.requests[gw.spaceTraders.requests.length - 1].authorization).toBe("Bearer fresh-token");
+    expect(gw.authService.requests.some((r) => r.url.includes("afterUnauthorized=true"))).toBe(true);
   });
 
-  it("does not retry a POST-with-401 as if it were a mutation-unsafe 5xx: it retries anyway (auth fails before any mutation runs)", async () => {
-    authService.respondWith(200, { agentToken: "fresh-token" });
-    fake.respondWith(
+  it("retries a 401 on a POST too — auth fails before any mutation runs", async () => {
+    // The refresh must hand back a *different* credential, or there is nothing
+    // for the retry to do differently; see the spin regression below.
+    gw.authService.respondWith(
+      { status: 200, body: { agentToken: "stale-token" } },
+      { status: 200, body: { agentToken: "fresh-token" } },
+    );
+    gw.spaceTraders.respondWith(
       { status: 401, body: JSON.stringify({ error: { message: "invalid token" } }) },
       { status: 200, body: JSON.stringify({ data: "bought" }) },
     );
 
-    const res = await request(app())
+    const res = await request(gw.app())
       .post("/proxy/my/ships/TEST-1/purchase")
       .set("Authorization", "Bearer x")
       .send({ symbol: "FUEL", units: 1 });
 
     expect(res.status).toBe(200);
-    expect(fake.requests).toHaveLength(2);
+    expect(gw.spaceTraders.requests).toHaveLength(2);
+    expect(gw.spaceTraders.requests[1].authorization).toBe("Bearer fresh-token");
+  });
+
+  // REGRESSION (bug: the two credential exceptions matched on the raw URL).
+  // Old behaviour: `req.url === "/register"` / `req.url === "/"` compared
+  // against the path *plus query string*, so `POST /proxy/register?x=1` fell
+  // through to the inject branch — registration went upstream carrying the
+  // agent token instead of the caller's account token, and 503'd outright
+  // whenever auth-service was UNCONFIGURED, i.e. exactly when registration is
+  // the one call that has to work.
+  it("treats POST /register as registration even with a query string attached", async () => {
+    gw.authService.respondWith({ status: 503, body: { error: { message: "no agent token configured" } } });
+
+    const res = await request(gw.app())
+      .post("/proxy/register?trace=1")
+      .set("Authorization", "Bearer account-token")
+      .send({ symbol: "TESTAGENT", faction: "COSMIC" });
+
+    expect(res.status).toBe(200);
+    expect(gw.spaceTraders.requests[0].authorization).toBe("Bearer account-token");
+    expect(gw.authService.requests).toHaveLength(0);
+  });
+
+  // REGRESSION (same root cause, the other exception).
+  // Old behaviour: `GET /proxy/?x=1` was not recognised as the unauthenticated
+  // root, so the gateway tried to inject — and returned 503 while auth-service
+  // was UNCONFIGURED, breaking the very poll auth-service uses to discover
+  // that SpaceTraders is reachable.
+  it("treats GET / as the unauthenticated root even with a query string attached", async () => {
+    gw.authService.respondWith({ status: 503, body: { error: { message: "no agent token configured" } } });
+
+    const res = await request(gw.app()).get("/proxy/?status=1");
+
+    expect(res.status).toBe(200);
+    expect(gw.spaceTraders.requests[0].authorization).toBeUndefined();
+    expect(gw.authService.requests).toHaveLength(0);
+  });
+
+  // REGRESSION (bug: a failed forced refresh left the dead token cached).
+  // Old behaviour: refreshAfterUnauthorized() only overwrote the cache on
+  // success. When the refresh failed, the token SpaceTraders had *just*
+  // rejected stayed cached and was re-injected on every subsequent request
+  // until the TTL expired — a self-inflicted outage lasting up to
+  // AUTH_SERVICE_TOKEN_CACHE_MS.
+  it("drops the cached token when a forced refresh fails, instead of re-injecting a known-dead credential", async () => {
+    const gateway = gw.app({ authServiceTokenCacheMs: 60_000, maxRetries: 1 });
+
+    gw.authService.respondWith({ status: 200, body: { agentToken: "dead-token" } });
+    await request(gateway).get("/proxy/my/ships").set("Authorization", "Bearer x");
+    expect(gw.spaceTraders.requests[0].authorization).toBe("Bearer dead-token");
+
+    // SpaceTraders rejects it and auth-service cannot produce a replacement.
+    gw.spaceTraders.respondWith({ status: 401, body: JSON.stringify({ error: { message: "invalid token" } }) });
+    gw.authService.respondWith({ status: 503, body: { error: { message: "no agent token configured" } } });
+    await request(gateway).get("/proxy/my/agent").set("Authorization", "Bearer x");
+
+    // Next call must not reuse the dead token from cache: with auth-service
+    // still unable to supply one, that means 503 and no upstream call at all.
+    const upstreamCallsSoFar = gw.spaceTraders.requests.length;
+    const res = await request(gateway).get("/proxy/my/agent").set("Authorization", "Bearer x");
+
+    expect(res.status).toBe(503);
+    expect(gw.spaceTraders.requests).toHaveLength(upstreamCallsSoFar);
+  });
+
+  // REGRESSION (bug: 401 retries spun with no backoff and no new credential).
+  // Old behaviour: every 401 re-armed the retry loop regardless of whether the
+  // forced refresh actually produced a different token, and did so with *zero*
+  // delay. A genuinely dead credential therefore burned MAX_RETRIES + 1
+  // upstream calls back-to-back out of the shared global budget — on every
+  // request — and forced an auth-service poll each time round.
+  it("stops retrying a 401 once the forced refresh returns the same credential", async () => {
+    gw.authService.respondWith({ status: 200, body: { agentToken: "same-token" } });
+    gw.spaceTraders.respondWith({ status: 401, body: JSON.stringify({ error: { message: "invalid token" } }) });
+
+    const res = await request(gw.app({ maxRetries: 3 })).get("/proxy/my/agent").set("Authorization", "Bearer x");
+
+    expect(res.status).toBe(401);
+    expect(gw.spaceTraders.requests).toHaveLength(1);
+    expect(gw.authService.requests.filter((r) => r.url.includes("afterUnauthorized=true"))).toHaveLength(1);
+  });
+
+  // REGRESSION (bug: concurrent cold-cache requests each fetched a token).
+  // Old behaviour: getToken() checked the cache, missed, and started its own
+  // fetch, so N requests arriving before the first fetch resolved produced N
+  // identical auth-service calls. Every cache expiry (and every process start)
+  // hit auth-service with a burst proportional to in-flight traffic.
+  it("collapses concurrent cold-cache token fetches into a single auth-service call", async () => {
+    gw.authService.respondAfter(40);
+    const gateway = gw.app({ authServiceTokenCacheMs: 60_000 });
+
+    await Promise.all(
+      Array.from({ length: 5 }, (_, i) =>
+        request(gateway).get(`/proxy/my/ships?n=${i}`).set("Authorization", "Bearer x"),
+      ),
+    );
+
+    expect(gw.spaceTraders.requests).toHaveLength(5);
+    expect(gw.authService.requests).toHaveLength(1);
+  });
+
+  // REGRESSION (bug: one null meant two very different things).
+  // Old behaviour: the token client returned null both for "auth-service says
+  // UNCONFIGURED" and for "auth-service is unreachable", and the gateway
+  // answered every one of them with 503 "SpaceTraders credential not
+  // configured". An operator paged for a dead auth-service went and checked
+  // SpaceTraders credentials instead — the one place nothing was wrong.
+  it("distinguishes an unreachable auth-service from an unconfigured one", async () => {
+    const unconfigured = gw.app();
+    gw.authService.respondWith({ status: 503, body: { error: { message: "no agent token configured" } } });
+    const unconfiguredRes = await request(unconfigured).get("/proxy/my/ships").set("Authorization", "Bearer x");
+
+    const unreachable = gw.app({ authServiceUrl: "http://127.0.0.1:1" });
+    const unreachableRes = await request(unreachable).get("/proxy/my/ships").set("Authorization", "Bearer x");
+
+    expect(unconfiguredRes.status).toBe(503);
+    expect(unreachableRes.status).toBe(503);
+    expect(unconfiguredRes.body.error.message).toMatch(/not configured/i);
+    expect(unreachableRes.body.error.message).toMatch(/auth-service/i);
+    expect(unreachableRes.body.error.message).not.toEqual(unconfiguredRes.body.error.message);
+    expect(gw.spaceTraders.requests).toHaveLength(0);
   });
 });

@@ -1,6 +1,8 @@
 import { readFileSync } from "fs";
 
 export interface GatewayConfig {
+  /** Listen port. Validated here rather than parsed inline at startup. */
+  port: number;
   spaceTradersBaseUrl: string;
   /** Global SpaceTraders budget, requests per second. */
   rateLimitRps: number;
@@ -35,16 +37,31 @@ const envNumber = (name: string, fallback: number, min: number): number => {
 };
 
 /**
+ * For counts, where a fraction is not merely odd but breaks an invariant: the
+ * retry loop runs `attempt <= maxRetries` and re-arms on `attempt <
+ * maxRetries`, so a fractional bound lets it exit mid-flight without ever
+ * relaying a response.
+ */
+const envInteger = (name: string, fallback: number, min: number): number => {
+  const value = envNumber(name, fallback, min);
+  if (!Number.isInteger(value)) {
+    throw new Error(`${name} must be a whole number >= ${min}, got "${process.env[name]}"`);
+  }
+  return value;
+};
+
+/**
  * Everything except the two secrets below — those get their own require*()
  * functions, same split as fleet-service's config.ts, so tests (which
  * construct a literal GatewayConfig via createApp) never need real Clerk or
  * auth-service env vars just to exercise the numeric settings.
  */
 export const configFromEnv = (): Omit<GatewayConfig, "clerkJwtKeyPem" | "authServiceSharedSecret"> => ({
+  port: envInteger("PORT", 3002, 1),
   spaceTradersBaseUrl: process.env.SPACETRADERS_BASE_URL ?? "https://api.spacetraders.io/v2",
   rateLimitRps: envNumber("RATE_LIMIT_RPS", 2, 0.1),
   rateLimitBurst: envNumber("RATE_LIMIT_BURST", 1, 1),
-  maxRetries: envNumber("MAX_RETRIES", 5, 0),
+  maxRetries: envInteger("MAX_RETRIES", 5, 0),
   retryBaseMs: envNumber("RETRY_BASE_MS", 500, 1),
   maxRetryDelayMs: envNumber("MAX_RETRY_DELAY_MS", 30_000, 1),
   authServiceUrl: process.env.AUTH_SERVICE_URL ?? "http://localhost:8082",

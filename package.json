@@ -1,13 +1,13 @@
 {
   "name": "st-gateway",
   "version": "1.0.0",
-  "description": "Global SpaceTraders request gateway: single rate budget, centralized retry/backoff and 429 handling for all services",
+  "description": "Global SpaceTraders request gateway: one shared rate budget, injected SpaceTraders credential, centralized retry and identity-derived priority for all services",
   "main": "dist/server.js",
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "dev": "npm run build && npm start",
     "typecheck": "tsc --noEmit",

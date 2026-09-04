@@ -1,0 +1,8 @@
+{
+  // Production build only. tsconfig.json deliberately still *includes* the
+  // tests so `npm run typecheck` covers them; without this split, `npm run
+  // build` emitted src/__tests__ and src/testSupport (keypair generator and
+  // all) into dist/ and straight into the runtime image.
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "dist", "src/__tests__", "src/testSupport"]
+}

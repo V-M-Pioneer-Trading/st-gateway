@@ -1,100 +1,38 @@
-import http from "http";
-import { AddressInfo } from "net";
 import request from "supertest";
-import { createApp } from "../server";
-import { FakeAuthService, TEST_AUTH_SERVICE_SHARED_SECRET } from "../testSupport/fakeAuthService";
-import { TEST_CLERK_JWT_KEY, userBearer } from "../testSupport/authTokens";
+import { useHarness, sleep } from "../testSupport/gatewayHarness";
+import { userBearer, machineBearer, expiredUserBearer, foreignBearer } from "../testSupport/authTokens";
 
-/** Same fake SpaceTraders API as gateway.test.ts, kept local to avoid a shared-fixture seam. */
-class FakeSpaceTraders {
-  server: http.Server;
-  requests: { url: string; receivedAt: number }[] = [];
-  private delayMs = 0;
-
-  constructor() {
-    this.server = http.createServer((req, res) => {
-      let body = "";
-      req.on("data", (c) => (body += c));
-      req.on("end", () => {
-        this.requests.push({ url: req.url ?? "", receivedAt: Date.now() });
-        setTimeout(() => {
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ data: "ok" }));
-        }, this.delayMs);
-      });
-    });
-  }
-
-  /** Simulate a slow upstream so requests pile up in the gateway's queue behind it. */
-  respondAfter(ms: number) {
-    this.delayMs = ms;
-  }
-
-  async start(): Promise<string> {
-    await new Promise<void>((resolve) => this.server.listen(0, resolve));
-    const { port } = this.server.address() as AddressInfo;
-    return `http://127.0.0.1:${port}`;
-  }
-
-  async stop() {
-    await new Promise<void>((resolve, reject) =>
-      this.server.close((err) => (err ? reject(err) : resolve()))
-    );
-  }
-}
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
+/**
+ * Priority derivation (auth-design.md decision 2) at the HTTP boundary.
+ *
+ * This file absorbed the old auth.test.ts, which had drifted into a near-copy:
+ * both suites carried their own FakeSpaceTraders, the same twelve-field config
+ * literal, and a byte-identical "exposes queue depth and latency" test. Queue
+ * *depth* now lives in tokenBucket.test.ts, where it can be asserted without a
+ * wall-clock race; what stays here is the behaviour that genuinely needs the
+ * whole gateway wired up.
+ */
 describe("st-gateway priority classes and observability", () => {
-  let fake: FakeSpaceTraders;
-  let baseUrl: string;
-  let authService: FakeAuthService;
-  let authServiceUrl: string;
+  const gw = useHarness();
+  // burst 1 + 5 rps: the first request takes the bucket, everything after it
+  // queues 200ms apart — wide enough to slot a request in mid-queue.
+  const app = (overrides = {}) => gw.app({ rateLimitRps: 5, rateLimitBurst: 1, maxRetries: 0, ...overrides });
 
-  beforeEach(async () => {
-    fake = new FakeSpaceTraders();
-    baseUrl = await fake.start();
-    authService = new FakeAuthService();
-    authServiceUrl = await authService.start();
-  });
-
-  afterEach(async () => {
-    await fake.stop();
-    await authService.stop();
-  });
-
-  const app = () =>
-    createApp({
-      spaceTradersBaseUrl: baseUrl,
-      rateLimitRps: 5,
-      rateLimitBurst: 1,
-      maxRetries: 0,
-      retryBaseMs: 5,
-      maxRetryDelayMs: 30_000,
-      authServiceUrl,
-      authServiceSharedSecret: TEST_AUTH_SERVICE_SHARED_SECRET,
-      authServiceTokenCacheMs: 30_000,
-      clerkJwtKeyPem: TEST_CLERK_JWT_KEY,
-      clerkIssuer: null,
-    });
+  const bg = "Bearer opaque-caller-token";
 
   it("serves a request carrying a verified human session ahead of background requests queued before it", async () => {
     const gateway = app();
 
-    // Burst of 1 lets the first request through immediately, queueing the rest
-    // at 5/s (200ms apart) — plenty of room to insert the interactive request.
     const background = Array.from({ length: 4 }, (_, i) =>
-      request(gateway).get(`/proxy/my/agent?bg=${i}`).set("Authorization", "Bearer opaque-caller-token")
+      request(gateway).get(`/proxy/my/agent?bg=${i}`).set("Authorization", bg),
     );
 
     await sleep(30); // let the background requests reach the gateway and queue
-    const interactive = request(gateway)
-      .get("/proxy/my/agent?priority=interactive")
-      .set("Authorization", userBearer());
+    const interactive = request(gateway).get("/proxy/my/agent?priority=interactive").set("Authorization", userBearer());
 
     await Promise.all([...background, interactive]);
 
-    const arrivalOrder = fake.requests.map((r) => r.url);
+    const arrivalOrder = gw.spaceTraders.requests.map((r) => r.url);
     const interactiveIndex = arrivalOrder.findIndex((u) => u.includes("priority=interactive"));
     // The very first background request may already have claimed the burst
     // token before the interactive request was even sent; every request queued
@@ -107,17 +45,16 @@ describe("st-gateway priority classes and observability", () => {
     const gateway = app();
 
     const background = Array.from({ length: 3 }, (_, i) =>
-      request(gateway).get(`/proxy/my/agent?bg=${i}`).set("Authorization", "Bearer opaque-caller-token")
+      request(gateway).get(`/proxy/my/agent?bg=${i}`).set("Authorization", bg),
     );
     await sleep(30);
-    const unmarked = request(gateway).get("/proxy/my/agent?unmarked=1").set("Authorization", "Bearer opaque-caller-token");
+    const unmarked = request(gateway).get("/proxy/my/agent?unmarked=1").set("Authorization", bg);
 
     await Promise.all([...background, unmarked]);
 
-    const arrivalOrder = fake.requests.map((r) => r.url);
-    const unmarkedIndex = arrivalOrder.findIndex((u) => u.includes("unmarked=1"));
+    const arrivalOrder = gw.spaceTraders.requests.map((r) => r.url);
     // No priority boost: it lands wherever plain FIFO puts it, i.e. last.
-    expect(unmarkedIndex).toBe(arrivalOrder.length - 1);
+    expect(arrivalOrder.findIndex((u) => u.includes("unmarked=1"))).toBe(arrivalOrder.length - 1);
   });
 
   // decision 2's whole point: X-Priority is no longer a trust signal, so
@@ -127,41 +64,90 @@ describe("st-gateway priority classes and observability", () => {
     const gateway = app();
 
     const background = Array.from({ length: 3 }, (_, i) =>
-      request(gateway).get(`/proxy/my/agent?bg=${i}`).set("Authorization", "Bearer opaque-caller-token")
+      request(gateway).get(`/proxy/my/agent?bg=${i}`).set("Authorization", bg),
     );
     await sleep(30);
     const spoofed = request(gateway)
       .get("/proxy/my/agent?spoofed=1")
-      .set("Authorization", "Bearer opaque-caller-token")
+      .set("Authorization", bg)
       .set("X-Priority", "interactive");
 
     await Promise.all([...background, spoofed]);
 
-    const arrivalOrder = fake.requests.map((r) => r.url);
-    const spoofedIndex = arrivalOrder.findIndex((u) => u.includes("spoofed=1"));
-    expect(spoofedIndex).toBe(arrivalOrder.length - 1);
+    const arrivalOrder = gw.spaceTraders.requests.map((r) => r.url);
+    expect(arrivalOrder.findIndex((u) => u.includes("spoofed=1"))).toBe(arrivalOrder.length - 1);
   });
 
-  it("exposes queue depth and latency per priority class via /metrics", async () => {
+  it("never grants interactive priority to a Clerk M2M (machine) token", async () => {
     const gateway = app();
-    fake.respondAfter(50);
 
-    const inFlight = Promise.all([
-      request(gateway).get("/proxy/my/agent?a=1").set("Authorization", "Bearer opaque-caller-token"),
+    const res = await request(gateway).get("/proxy/my/agent").set("Authorization", machineBearer());
+    expect(res.status).toBe(200);
+
+    const metrics = await request(gateway).get("/metrics");
+    expect(metrics.body.queues.interactive.latencyMs.count).toBe(0);
+    expect(metrics.body.queues.background.latencyMs.count).toBeGreaterThanOrEqual(1);
+  });
+
+  it.each([
+    ["no Authorization header at all", undefined],
+    ["an expired session", expiredUserBearer()],
+    ["a token signed by an untrusted key", foreignBearer()],
+    ["a non-bearer scheme", "Basic dXNlcjpwYXNz"],
+  ])("degrades to background rather than rejecting the request: %s", async (_name, authorization) => {
+    const gateway = app();
+    const req = request(gateway).get("/proxy/my/agent");
+    if (authorization !== undefined) req.set("Authorization", authorization);
+    const res = await req;
+
+    // Priority derivation never blocks the request itself — only the queue
+    // lane. A malformed/invalid identity still gets a normal 200.
+    expect(res.status).toBe(200);
+
+    const metrics = await request(gateway).get("/metrics");
+    expect(metrics.body.queues.interactive.latencyMs.count).toBe(0);
+  });
+
+  // CLERK_ISSUER is optional and was previously exercised by nothing at all,
+  // so a typo in it would have silently demoted every human caller to
+  // background with no test noticing.
+  describe("CLERK_ISSUER", () => {
+    const issuer = "https://clerk.example.test";
+
+    it("accepts a session whose iss matches", async () => {
+      const gateway = app({ clerkIssuer: issuer });
+      await request(gateway).get("/proxy/my/agent").set("Authorization", userBearer({ issuer }));
+
+      const metrics = await request(gateway).get("/metrics");
+      expect(metrics.body.queues.interactive.latencyMs.count).toBe(1);
+    });
+
+    it("demotes a session whose iss does not match", async () => {
+      const gateway = app({ clerkIssuer: issuer });
+      await request(gateway).get("/proxy/my/agent").set("Authorization", userBearer({ issuer: "https://evil.test" }));
+
+      const metrics = await request(gateway).get("/metrics");
+      expect(metrics.body.queues.interactive.latencyMs.count).toBe(0);
+      expect(metrics.body.queues.background.latencyMs.count).toBe(1);
+    });
+  });
+
+  it("reports per-class wait latency through /metrics once requests have drained", async () => {
+    const gateway = app();
+    gw.spaceTraders.respondAfter(20);
+
+    await Promise.all([
+      request(gateway).get("/proxy/my/agent?a=1").set("Authorization", bg),
       request(gateway).get("/proxy/my/agent?a=2").set("Authorization", userBearer()),
-      request(gateway).get("/proxy/my/agent?a=3").set("Authorization", "Bearer opaque-caller-token"),
+      request(gateway).get("/proxy/my/agent?a=3").set("Authorization", bg),
     ]);
 
-    await sleep(20); // requests queued but not yet all dispatched
-    const midFlight = await request(gateway).get("/metrics");
-    expect(midFlight.status).toBe(200);
-    expect(midFlight.body.queues.interactive.depth + midFlight.body.queues.background.depth).toBeGreaterThan(0);
-
-    await inFlight;
-
     const after = await request(gateway).get("/metrics");
-    expect(after.body.queues.interactive.latencyMs.count).toBeGreaterThanOrEqual(1);
-    expect(after.body.queues.background.latencyMs.count).toBeGreaterThanOrEqual(2);
+    expect(after.body.queues.interactive.latencyMs.count).toBe(1);
+    expect(after.body.queues.background.latencyMs.count).toBe(2);
     expect(after.body.queues.interactive.latencyMs.avg).toBeGreaterThanOrEqual(0);
+    expect(after.body.queues.background.latencyMs.max).toBeGreaterThanOrEqual(
+      after.body.queues.background.latencyMs.avg,
+    );
   });
 });
