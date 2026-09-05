@@ -143,11 +143,10 @@ not read at all, so no caller can promote itself.
 
 Verification never rejects a request. It only chooses a queue.
 
-> **Interim gap.** The calling services do not yet forward their own Clerk token
-> here — until they do, every request fails verification and lands in
-> background, including genuinely interactive dashboard traffic. This was
-> accepted deliberately: shipping verification closed the spoofing hole
-> immediately rather than leaving it open until the callers change.
+Since increment 3 Stage 5, agent/fleet/navigation-service forward the caller's
+own Clerk session verbatim, so dashboard traffic arrives as a human session and
+lands in the interactive lane; automation-service's M2M token and auth-service's
+unauthenticated poll land in background.
 
 ## Endpoints
 
