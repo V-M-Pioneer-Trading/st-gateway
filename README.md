@@ -168,14 +168,16 @@ Everything not listed here is an upstream response passed through unchanged.
 
 | Status | When | Message |
 |---|---|---|
-| `503` | auth-service answered, but has no agent token to give | `SpaceTraders credential not configured` |
-| `503` | auth-service could not be reached, or spoke nonsense | `auth-service unavailable: cannot obtain a SpaceTraders credential` |
+| `503` | auth-service answered `503` — its documented "no agent token yet" (UNCONFIGURED) | `SpaceTraders credential not configured` |
+| `503` | auth-service could not be reached, spoke nonsense, or failed on its own side — any other non-2xx, including a `403` meaning our shared secret is wrong | `auth-service unavailable: cannot obtain a SpaceTraders credential` |
 | `502` | SpaceTraders unreachable after retries | `SpaceTraders unreachable: …` |
 | `502` | the upstream response failed mid-read, or the handler threw | `SpaceTraders proxy failed: …` |
 | `413` | request body over 5 MB | from the body parser |
 
 The two 503s are deliberately different: one points at the SpaceTraders
-credential, the other at auth-service. They used to be the same sentence.
+credential, the other at auth-service. They used to be the same sentence — and
+only auth-service's own `503` means the credential is the problem. Anything
+else it answers with is auth-service's fault, not the credential's.
 
 ## Configuration
 

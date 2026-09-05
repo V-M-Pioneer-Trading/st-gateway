@@ -232,6 +232,23 @@ describe("st-gateway credential injection (auth-design.md decision 5)", () => {
     expect(gw.authService.requests).toHaveLength(1);
   });
 
+  // REGRESSION (Copilot review: every non-2xx was classified "unconfigured").
+  // Old behaviour: `if (!res.ok) return fail("unconfigured", ...)` lumped a
+  // broken auth-service (500) and a wrong shared secret (403) in with its
+  // documented 503 UNCONFIGURED, so an auth-service outage still answered
+  // "SpaceTraders credential not configured" — the exact misdirection the
+  // typed failure reason was introduced to remove.
+  it("reports an auth-service 500 as an auth-service fault, not an unconfigured credential", async () => {
+    gw.authService.respondWith({ status: 500, body: { error: { message: "boom" } } });
+
+    const res = await request(gw.app()).get("/proxy/my/ships").set("Authorization", "Bearer x");
+
+    expect(res.status).toBe(503);
+    expect(res.body.error.message).toMatch(/auth-service/i);
+    expect(res.body.error.message).not.toMatch(/not configured/i);
+    expect(gw.spaceTraders.requests).toHaveLength(0);
+  });
+
   // REGRESSION (bug: one null meant two very different things).
   // Old behaviour: the token client returned null both for "auth-service says
   // UNCONFIGURED" and for "auth-service is unreachable", and the gateway

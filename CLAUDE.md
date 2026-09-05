@@ -19,6 +19,15 @@ Contributor and agent notes. Behaviour, rationale and configuration live in
 never reach `dist/` or the image. Editing one without the other either drops
 type coverage or ships test code to production.
 
+**Both tsconfigs must be listed in the Dockerfile's build stage.** `npm run
+build` resolves `tsconfig.build.json` at runtime, so a `COPY` line naming only
+`tsconfig.json` fails the image build with `TS5058: The specified path does not
+exist` — and nothing outside a real image build catches it, because a local
+build has every file already. When you touch either tsconfig or the build
+script, check the `COPY` line too. A local clean-room check must derive its
+file list *from the Dockerfile's own COPY lines*; copying what the build
+"obviously needs" reproduces nothing.
+
 ## Module map
 
 | File | Owns | Imports from this repo |
@@ -56,9 +65,15 @@ Each of these is stated so you can recognise a violation in a diff.
    carries the query string and is used *only* to build the upstream URL. A
    comparison against `req.url` anywhere else is the bug that made
    `POST /register?x=1` inject the wrong token.
-3. **An upstream response body is consumed exactly once**: `body.cancel()` on a
-   path that retries, `.text()` on a path that relays — never both, never
-   neither. Cancelling before a relay silently empties the caller's response.
+3. **Every `fetch` response body is consumed exactly once** — SpaceTraders' and
+   auth-service's alike. In `server.ts`: `body.cancel()` on a path that
+   retries, `.text()` on a path that relays; never both, never neither, and
+   cancelling before a relay silently empties the caller's response. In
+   `authServiceClient.ts`: a non-2xx reply is never read, so it must be
+   explicitly cancelled — an unread body keeps undici from returning the
+   socket to the pool, and the failing case there is a poll that repeats on
+   every request. An early `return` next to a `Response` you did not read is
+   the shape to look for.
 4. **Nothing in the `/proxy` handler may throw past `proxy()`.** The `try` in
    `createApp`'s `app.use("/proxy", …)` is load-bearing: Express 4 ignores
    rejections from async handlers, so an unguarded throw leaves the caller's
@@ -190,6 +205,11 @@ actually depends on.
   safe for mutations too, and why.
 - **A gateway-generated error** → keep the `{ error: { message } }` envelope and
   add a row to the README's error table.
+- **An auth-service failure mode** → a `TokenFailure` reason in
+  `authServiceClient.ts` plus a message in `CREDENTIAL_UNAVAILABLE`. The reason
+  exists to name the system an operator should go and look at, so do not fold a
+  new one into `unconfigured` unless auth-service is genuinely telling us the
+  SpaceTraders credential is missing — only its `503` means that.
 
 ---
 

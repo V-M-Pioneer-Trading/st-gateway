@@ -17,9 +17,14 @@
  */
 
 export type TokenFailure =
-  /** auth-service answered, but has no agent token to give (503 UNCONFIGURED, 403, empty body). */
+  /** auth-service answered and told us it has no agent token yet: its 503 UNCONFIGURED, or an empty body. */
   | "unconfigured"
-  /** auth-service could not be reached or spoke nonsense — nothing is known about the credential. */
+  /**
+   * auth-service could not be reached, spoke nonsense, or failed on its own
+   * side (any other non-2xx — a 500, or a 403 meaning our shared secret is
+   * wrong). Nothing is known about the credential; the fault is not the
+   * SpaceTraders credential's.
+   */
   | "unavailable";
 
 export type TokenResult = { token: string } | { token: null; reason: TokenFailure };
@@ -65,7 +70,20 @@ export function createAuthTokenClient(config: AuthTokenClientConfig): AuthTokenC
     } catch (err) {
       return fail("unavailable", String(err));
     }
-    if (!res.ok) return fail("unconfigured", `HTTP ${res.status}`);
+    if (!res.ok) {
+      // Nothing here reads the body, and an unread body keeps undici from
+      // returning the socket to the pool — which matters precisely here,
+      // because the failing case is a poll that repeats on every request.
+      await res.body?.cancel();
+      // 503 is auth-service's documented "I have no agent token yet"
+      // (UNCONFIGURED). Any other status is auth-service failing on its own
+      // side — a 500, or a 403 saying our shared secret is wrong — and
+      // reporting those as an unconfigured SpaceTraders credential sends
+      // whoever is paged to the one system that is fine.
+      return res.status === 503
+        ? fail("unconfigured", "HTTP 503 (auth-service reports no agent token)")
+        : fail("unavailable", `HTTP ${res.status}`);
+    }
 
     let body: TokenResponse;
     try {
