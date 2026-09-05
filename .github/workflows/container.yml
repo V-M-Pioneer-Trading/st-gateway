@@ -32,6 +32,10 @@ jobs:
 
       - run: npm ci
 
+      # tsc covers the tests too (see tsconfig.json vs tsconfig.build.json).
+      # Without this step nothing in CI ever ran the typecheck script.
+      - run: npm run typecheck
+
       - run: npm test
 
   docker:
