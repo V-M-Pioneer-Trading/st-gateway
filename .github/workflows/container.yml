@@ -1,8 +1,10 @@
 name: container
 
 on:
+  # No branch filter: a pull request stacked on another branch needs the same
+  # checks as one targeting main. Filtering to main meant a stacked PR ran
+  # nothing at all and looked green by default.
   pull_request:
-    branches: [main]
   push:
     branches: [main]
     tags: ["v*"]
@@ -15,12 +17,13 @@ on:
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
 
 jobs:
+  # Not gated to pull requests: it runs for every event that can reach the
+  # deploy job below — a push to main or a tag, and a manual dispatch — because
+  # previously a merge to main skipped the tests entirely and went straight to
+  # build-and-deploy.
   test:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +44,15 @@ jobs:
   docker:
     # Anything that is not a PR: a push to main/tag, or a manual dispatch.
     if: github.event_name != 'pull_request'
+    needs: test
+    # Deploy credentials live on this job alone. Declared at workflow level they
+    # reached the test job too, and since that job now runs on pushes to main its
+    # OIDC token would satisfy the deploy role's trust policy: npm install scripts
+    # and test code could have assumed the role that redeploys production.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
