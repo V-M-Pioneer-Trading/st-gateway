@@ -88,10 +88,13 @@ jobs:
       - name: Check this commit is still the tip of main
         id: tip
         run: |
-          # --exit-code, no pipe: a failed lookup must fail the run, not read
-          # as "not the tip" and skip the deploy with a green check.
-          tip=$(git ls-remote --exit-code origin refs/heads/main)
-          tip=${tip%%[[:space:]]*}
+          # --exit-code and no pipe on ls-remote: a failed lookup must fail the
+          # run, not read as "not the tip" and skip with a green check. The
+          # pattern matches ref-name suffixes (a branch x/refs/heads/main
+          # matches too), so keep the exact ref only.
+          refs=$(git ls-remote --exit-code origin refs/heads/main)
+          tip=$(printf '%s\n' "$refs" | awk '$2 == "refs/heads/main" { print $1 }')
+          [ -n "$tip" ] || { echo "::error::refs/heads/main not found on origin"; exit 1; }
           if [ "$GITHUB_REF" = refs/heads/main ] && [ "$tip" = "$GITHUB_SHA" ]; then
             echo "Deploying $GITHUB_SHA, the tip of main."
             echo "deploy=true" >> "$GITHUB_OUTPUT"
