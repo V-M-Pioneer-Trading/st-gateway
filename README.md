@@ -21,6 +21,13 @@ Three things live here and nowhere else:
 
 Everything else is a consequence of those three.
 
+It also picks a **queue lane** for each call, from auth-service's answer about
+the caller's token. That is the only thing it decides about a caller. It never
+decides whether a caller may make a call — the calling service already did,
+against the same auth-service — so it never rejects a request for its
+credential, and an auth-service outage slows the dashboard down rather than
+stopping any game call. See [Lanes](#lanes).
+
 ## Architecture
 
 ```mermaid
@@ -43,6 +50,7 @@ flowchart LR
   FLT --> GW
   AUTH -- "polls the unauthenticated root through the gateway" --> GW
   GW -- "GET /auth/v1/token" --> AUTH
+  GW -- "POST /auth/v1/introspect<br/>which lane, never whether" --> AUTH
   GW --> ST
 ```
 
@@ -54,7 +62,7 @@ see [Known limitations](#known-limitations).
 
 ```mermaid
 flowchart TD
-  A["ANY /proxy/{spacetraders-path}"] --> B["derive priority from the caller's Clerk token"]
+  A["ANY /proxy/{spacetraders-path}"] --> B["pick a lane: ask auth-service about the caller's token<br/>at most 250 ms, never rejects"]
   B --> C{"credential mode<br/>from method + path"}
   C -- "GET /" --> D["send no Authorization"]
   C -- "POST /register" --> E["forward the caller's Authorization"]
@@ -132,21 +140,48 @@ either case the next request that needs a credential refetches. The
 that failed left the credential SpaceTraders had *just* rejected in the cache,
 to be re-injected on every request until the TTL ran out.
 
-### Priority
+### Lanes
 
-Priority is derived from a **verified** identity, never declared. The caller's
-own `Authorization` (a Clerk token) is verified locally against an RS256 public
-key; a genuine human session — `sub` starting `user_` — earns the interactive
-lane. Everything else is background: no token, an expired or foreign-signed
-one, or a Clerk M2M token, whose `sub` is a Machine ID (`mch_`). `X-Priority` is
-not read at all, so no caller can promote itself.
+The token bucket drains two queues, `interactive` first. Which one a call
+waits in is **derived, never declared** (auth-design.md decision 2):
+`X-Priority` is not read at all, so no caller can promote itself.
 
-Verification never rejects a request. It only chooses a queue.
+Since meta#80 step 9 the gateway does not verify tokens itself. It asks
+auth-service, the one component that does (decision 21), through the shared
+[introspection client](https://github.com/V-M-Pioneer-Trading/ts-introspection-client)'s
+lane deriver:
 
-Since increment 3 Stage 5, agent/fleet/navigation-service forward the caller's
-own Clerk session verbatim, so dashboard traffic arrives as a human session and
-lands in the interactive lane; automation-service's M2M token and auth-service's
-unauthenticated poll land in background.
+| The caller's `Authorization` | Center called | Lane |
+|---|---|---|
+| exactly one line, `Bearer <token>`, and auth-service answers active with `kind: "operator"` | once | `interactive` |
+| … answered active with `kind: "machine"` (automation-service's M2M token) | once | `background` |
+| … answered `{"active": false}` (expired, foreign-signed, revoked) | once | `background` |
+| … and auth-service is down, slow past 250 ms, answers non-2xx or nonsense, or refuses our secret | once | `background` |
+| none at all (auth-service's own poll, an anonymous read) | **no** | `background` |
+| not `Bearer` + one token: `Basic …`, `Bearer`, `Bearer `, `Bearer abc def` | **no** | `background` |
+| two or more `Authorization` lines, whatever they hold | **no** | `background` |
+
+The lane follows `kind` as auth-service reports it; the gateway never looks at
+`sub`, and knows nothing of Clerk's subject prefixes. The line count comes
+from the raw header list: Node keeps the first of two `Authorization` lines and
+drops the rest, so reading the parsed header would let a caller choose which
+of two credentials picks its lane.
+
+**What it never does.** It never rejects, never answers 401, 403 or 503 for a
+caller's credential, and never fails a game call because auth-service is
+unavailable: a gateway that failed closed on the center would take the whole
+public read surface down with auth-service. It never waits on the center for
+more than **250 ms** — well above a healthy round trip on the same host, and a
+quarter of what a client that *rejects* would allow itself, because a lane is a
+guess the gateway is willing to make without an answer. It asks at most once
+per inbound request, before the retry loop, and never for `/health` or
+`/metrics`. The fixture's twelve gateway cases pin all of this
+(`src/__tests__/lane.conformance.test.ts`).
+
+In practice agent, fleet and navigation-service forward the dashboard's human
+session verbatim, so a person watching the dashboard is `interactive`;
+automation-service's machine token and auth-service's anonymous poll are
+`background`.
 
 ## Endpoints
 
@@ -155,7 +190,7 @@ unauthenticated poll land in background.
 | `GET /health` | `{ "status": "ok" }` | none |
 | `GET /api/st-gateway/health` | same handler; the path the shared host routes to | none |
 | `GET /metrics` | `{ queues: { interactive, background }: { depth, latencyMs: { count, avg, max } } }` | none |
-| `ANY /proxy/<spacetraders-path>` | the upstream response, relayed | optional; a Clerk token only chooses the queue |
+| `ANY /proxy/<spacetraders-path>` | the upstream response, relayed | optional; a bearer token only chooses the lane, and is never refused |
 
 Method, query string and body are forwarded verbatim; the body is never parsed.
 On the way back, the status, the body and the pacing headers (`Retry-After`,
@@ -190,29 +225,44 @@ else it answers with is auth-service's fault, not the credential's.
 | `RETRY_BASE_MS` | `500` | First backoff delay; doubles per retry |
 | `MAX_RETRY_DELAY_MS` | `30000` | Ceiling on any single retry delay, whatever `Retry-After` demands |
 | `AUTH_SERVICE_URL` | `http://localhost:8082` | Where `GET /auth/v1/token` is fetched from |
-| `AUTH_SERVICE_SHARED_SECRET` | *(required)* | Presented as `X-Auth-Service-Secret` on every token fetch |
+| `AUTH_SERVICE_SHARED_SECRET` | *(required)* | The vault secret, presented as `X-Auth-Service-Secret` on every agent-token fetch |
 | `AUTH_SERVICE_TOKEN_CACHE_MS` | `30000` | How long a fetched token is served from cache; `0` disables caching |
-| `CLERK_JWT_KEY` / `CLERK_JWT_KEY_FILE` | *(required)* | Clerk's RS256 public key — inline wins over file |
-| `CLERK_ISSUER` | *(none)* | Optional `iss` claim check |
+| `AUTH_INTROSPECTION_URL` | *(required)* | auth-service's **full** introspection endpoint, `/auth/v1/introspect` included, POSTed to verbatim — never a base URL. Absolute `http(s)`, no query string |
+| `AUTH_INTROSPECTION_SECRET` | *(required)* | Presented as `X-Introspection-Secret` when asking which lane a token earns |
 
-Every numeric value is validated at startup, and the two secrets have no
-defaults. A service that starts with a mangled budget, an unparseable port, or
-no trust anchor is a service that looks healthy while doing the wrong thing, so
-all of those fail loudly instead.
+Every numeric value is validated at startup, and the three required
+auth-service values have no defaults. A service that starts with a mangled
+budget, an unparseable port, or no way to reach auth-service is a service that
+looks healthy while doing the wrong thing — without the introspection
+variables it would proxy every call in the background lane forever, and
+nothing would say why the dashboard had gone slow — so all of those fail
+loudly instead.
+
+**The two auth-service secrets are different secrets, and must never hold the
+same value.** `AUTH_INTROSPECTION_SECRET` is held by every service that asks
+auth-service about a token, because an answer only describes a token the caller
+already has. `AUTH_SERVICE_SHARED_SECRET` is held by st-gateway alone, because
+it withdraws the agent token that spends the whole system's SpaceTraders
+account. One value for both would let any service that can introspect also
+fetch the agent token and call SpaceTraders around this gateway's rate budget.
+
+`CLERK_JWT_KEY`, `CLERK_JWT_KEY_FILE` and `CLERK_ISSUER` are **no longer
+read**. The stack may still set them until meta#80 step 10 removes them; their
+values, garbage included, change nothing.
 
 ## Running it
 
 | Command | What it does |
 |---|---|
 | `npm install` | install dependencies |
-| `npm test` | jest + supertest against in-process fake SpaceTraders and auth-service servers |
+| `npm test` | jest + supertest against in-process fake SpaceTraders, auth-service and introspection servers |
 | `npm run typecheck` | `tsc --noEmit` over `src/`, tests included |
 | `npm run build` | compile to `dist/` — production sources only |
 | `npm start` | run `dist/server.js` |
 | `npm run dev` | build, then start |
 
-Tests drive the proxy's HTTP boundary, with the two fake upstreams as the only
-seams, plus a unit level for the token bucket. See `CLAUDE.md` for the harness
+Tests drive the proxy's HTTP boundary, with the three fake upstreams as the
+only seams, plus a unit level for the token bucket. See `CLAUDE.md` for the harness
 and its conventions.
 
 ## Known limitations
@@ -224,7 +274,11 @@ Deliberate, not accidental:
   of the service. Scale it up, not out.
 - **Interactive can starve background.** Draining is strictly by class, with no
   fairness cap and no aging. Sustained interactive load would hold background
-  traffic indefinitely. Currently theoretical: see the interim gap above.
+  traffic indefinitely. Interactive traffic is one person's dashboard, so this
+  is theoretical at today's load.
+- **A hanging auth-service costs every credentialed call up to 250 ms.** The
+  lane is decided before the call queues, and the gateway waits that long for
+  an answer before settling for `background`. Anonymous calls never wait.
 - **A token spent on a caller that walked away is not reclaimed.** The upstream
   call is skipped, but the bucket slot is already gone.
 - **`/metrics` is cumulative and unauthenticated.** Counters run for the life of
