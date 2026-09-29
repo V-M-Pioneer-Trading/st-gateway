@@ -1,6 +1,8 @@
+import net from "net";
+import { AddressInfo } from "net";
 import request from "supertest";
 import { useHarness, sleep } from "../testSupport/gatewayHarness";
-import { LANE_TIMEOUT_MS } from "../server";
+import { CENTER_WARNING_INTERVAL_MS, LANE_TIMEOUT_MS } from "../server";
 import {
   ACTIVE_OPERATOR,
   MACHINE_BEARER,
@@ -153,11 +155,18 @@ describe("st-gateway queue lanes", () => {
     expect(await lanes(gateway)).toEqual({ interactive: 0, background: 1 });
   });
 
+  // Pinned on its own because the hang test below uses a fixed ceiling: a
+  // ceiling derived from the constant would let the constant itself drift
+  // (to 1000, say) and still pass.
+  it("pins the lane timeout at 250 ms", () => {
+    expect(LANE_TIMEOUT_MS).toBe(250);
+  });
+
   // The center is on the hot path of every credentialed game call, so a hung
   // auth-service must cost each one the lane timeout and no more. Without a
   // timeout of its own the gateway would wait on the shared client's 1 s
   // default; without any timeout it would wait for as long as the center does.
-  it(`gives up on a hanging center after ${LANE_TIMEOUT_MS} ms and proxies the call in the background lane`, async () => {
+  it("gives up on a hanging center after 250 ms and proxies the call in the background lane", async () => {
     gw.center.respondWith({ ...ACTIVE_OPERATOR, delayMs: 5_000 });
     const gateway = app();
 
@@ -167,10 +176,12 @@ describe("st-gateway queue lanes", () => {
     expect(gw.spaceTraders.requests).toHaveLength(1);
     expect(gw.center.requests).toHaveLength(1);
     // A floor proves the center really was asked and waited on; the ceiling
-    // is the property. The margin covers the rest of the request on a slow
-    // CI runner and still fails a 1000 ms timeout.
-    expect(res.elapsedMs).toBeGreaterThanOrEqual(LANE_TIMEOUT_MS - 20);
-    expect(res.elapsedMs).toBeLessThan(LANE_TIMEOUT_MS + 450);
+    // is the property. Both are fixed numbers, not derived from
+    // LANE_TIMEOUT_MS, so doubling the timeout at the construction site
+    // (500 ms) fails here. 450 ms leaves 200 ms for the rest of the request
+    // on a slow CI runner.
+    expect(res.elapsedMs).toBeGreaterThanOrEqual(230);
+    expect(res.elapsedMs).toBeLessThan(450);
     expect(await lanes(gateway)).toEqual({ interactive: 0, background: 1 });
   });
 
@@ -207,6 +218,105 @@ describe("st-gateway queue lanes", () => {
     expect(res.status).toBe(200);
     expect(gw.center.requests).toHaveLength(0);
     expect(await lanes(gateway)).toEqual({ interactive: 0, background: 1 });
+  });
+
+  // Node's parser caps a request at 2000 raw header entries. Past the cap,
+  // Node 22 answers 431 before any handler runs, and Node 25 hands the app a
+  // TRUNCATED rawHeaders — so a second Authorization line sent after enough
+  // filler is simply not in the list. A gateway that counted rawHeaders
+  // itself and then read req.header() would see one line and introspect the
+  // first; soleAuthorizationLine reads a list that reached the cap as
+  // uncountable. Either way: no center call, and never the interactive lane.
+  it("makes no center call when a second Authorization line hides past the header-count cap", async () => {
+    const gateway = app();
+    const server = gateway.listen(0, "127.0.0.1");
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    const { port } = server.address() as AddressInfo;
+
+    const fillers = Array.from({ length: 1100 }, (_, i) => `x-filler-${i}: 1\r\n`).join("");
+    const raw =
+      "GET /proxy/my/agent HTTP/1.1\r\nHost: 127.0.0.1\r\n" +
+      `Authorization: ${OPERATOR_BEARER}\r\n` +
+      fillers +
+      `Authorization: ${OPERATOR_BEARER}\r\n` +
+      "Connection: close\r\n\r\n";
+
+    let status = 0;
+    try {
+      const reply = await new Promise<string>((resolve, reject) => {
+        const socket = net.connect(port, "127.0.0.1", () => socket.write(raw));
+        let data = "";
+        socket.setEncoding("utf8");
+        socket.on("data", (chunk) => (data += chunk));
+        socket.on("end", () => resolve(data));
+        socket.on("error", reject);
+      });
+      status = Number(/^HTTP\/1\.1 (\d{3})/.exec(reply)?.[1] ?? 0);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+
+    expect([200, 431]).toContain(status);
+    expect(gw.center.requests).toHaveLength(0);
+    const expected = status === 200 ? { interactive: 0, background: 1 } : { interactive: 0, background: 0 };
+    expect(await lanes(gateway)).toEqual(expected);
+  });
+
+  // POST /register authenticates with the SpaceTraders account token, which
+  // is not a session and is nobody's business but SpaceTraders'. It used to
+  // go to auth-service's introspection endpoint like any other bearer, for an
+  // answer that could only ever be "inactive".
+  it("never asks the center about POST /register's account token, and forwards it untouched", async () => {
+    const gateway = app();
+
+    const res = await request(gateway).post("/proxy/register").set("Authorization", OPERATOR_BEARER).send({ symbol: "X" });
+
+    expect(res.status).toBe(200);
+    expect(gw.center.requests).toHaveLength(0);
+    expect(gw.spaceTraders.requests[0].authorization).toBe(OPERATOR_BEARER);
+    expect(await lanes(gateway)).toEqual({ interactive: 0, background: 1 });
+  });
+
+  // A misconfigured center — a rotated secret, a trailing slash on the URL —
+  // demotes every operator to background and fails nothing, so without a log
+  // line nobody would ever know.
+  describe("when the center cannot be used", () => {
+    let warn: jest.SpyInstance;
+    beforeEach(() => {
+      warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    });
+    afterEach(() => warn.mockRestore());
+
+    const centerWarnings = () =>
+      warn.mock.calls.map((args) => String(args[0])).filter((line) => line.includes("introspection"));
+
+    it("warns once for a burst, naming the endpoint and never the token or the secret", async () => {
+      gw.center.respondWith({ status: 401, body: JSON.stringify({ error: { message: "bad secret" } }) });
+      const gateway = gw.app();
+
+      await Promise.all(
+        Array.from({ length: 5 }, () => request(gateway).get("/proxy/my/agent").set("Authorization", OPERATOR_BEARER)),
+      );
+      await request(gateway).get("/proxy/my/agent").set("Authorization", OPERATOR_BEARER);
+
+      expect(gw.center.requests).toHaveLength(6);
+      expect(CENTER_WARNING_INTERVAL_MS).toBe(60_000);
+      const lines = centerWarnings();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain(new URL(gw.centerUrl).pathname);
+      expect(lines[0]).not.toContain(OPERATOR_TOKEN);
+      expect(lines[0]).not.toContain(TEST_INTROSPECTION_SECRET);
+    });
+
+    it("says nothing when the center answers, even when the answer is inactive", async () => {
+      const gateway = gw.app();
+
+      await request(gateway).get("/proxy/my/agent").set("Authorization", unknown);
+      await request(gateway).get("/proxy/my/agent").set("Authorization", OPERATOR_BEARER);
+
+      expect(centerWarnings()).toHaveLength(0);
+    });
   });
 
   it.each(["/health", "/api/st-gateway/health", "/metrics"])(

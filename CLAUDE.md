@@ -106,6 +106,9 @@ Each of these is stated so you can recognise a violation in a diff.
     one call ask the center once per attempt; dropping the timeout makes a
     hanging auth-service cost every credentialed call the client's 1 s
     default.
+12. **`POST /register` never reaches the lane deriver.** Its `Authorization`
+    is the SpaceTraders account token, forwarded verbatim; it is always
+    `background` and auth-service is never asked about it.
 
 ## Critical sequences
 
@@ -185,14 +188,14 @@ delay. The fake center (`fakeCenter.ts`) answers per token —
 `OPERATOR_BEARER` and `MACHINE_BEARER` out of the box, anything else inactive
 — or one reply for all via `respondWith`; its tokens are deliberately not
 JWTs. Which lane a request took is read from `/metrics`: each queue's
-`latencyMs.count` rises by one per dispatch.
+`latencyMs.count` rises by one per dispatch. Pass config differences as
+overrides — `gw.app({ maxRetries: 0 })` — so a test states the setting it
+actually depends on.
 
 `lane.conformance.test.ts` drives meta's fixture (vendored under
 `src/__tests__/fixtures/`, provenance in `SOURCE.txt`) through the real app.
 It checks the vendored bytes against the recorded sha256 and the exact list of
-case names, so re-vendoring is a deliberate edit to both, never a drop-in. Pass config differences as
-overrides — `gw.app({ maxRetries: 0 })` — so a test states the setting it
-actually depends on.
+case names, so re-vendoring is a deliberate edit to both, never a drop-in.
 
 ### Known flake patterns
 
@@ -208,13 +211,18 @@ actually depends on.
 - **Elapsed-time lower bounds** (the rate-budget test, the `Retry-After` test)
   assert a floor, never a ceiling. Keep the margin generous.
 - **The one ceiling** is the hanging-center test in `priority.test.ts`: the
-  lane timeout *is* a ceiling, so it has to be asserted as one. It allows
-  `LANE_TIMEOUT_MS + 450` ms, which a slow runner meets and a 1 s timeout does
-  not. Do not tighten it.
+  lane timeout *is* a ceiling, so it has to be asserted as one. It is a fixed
+  450 ms, never derived from `LANE_TIMEOUT_MS` (a derived ceiling lets the
+  constant drift and still pass; a separate test pins the constant at 250).
+  450 leaves 200 ms for the rest of the request on a slow runner and still
+  fails a doubled, 500 ms timeout. Do not tighten it, and do not loosen it
+  past 500.
 - **A test that aborts a request must attach `.on("error", () => {})`** to it,
   or Node surfaces the deliberate abort as `socket hang up` and fails the test.
 - `console.warn` / `console.error` output during the auth-failure and
-  truncated-body tests is expected: those paths are supposed to be loud.
+  truncated-body tests is expected: those paths are supposed to be loud. So is
+  the center-unavailable warning in the lane tests; it fires at most once a
+  minute per app, and every test builds a fresh app.
 
 ### Conventions
 

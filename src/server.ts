@@ -6,8 +6,11 @@
  * else. It never decides whether a caller may make a call — that happened
  * once already, in the calling service, against the same auth-service this
  * gateway asks — so it never rejects a request for its credential, never
- * answers 401 or 403, and never fails a game call because auth-service is
- * down (token-introspection.md, "What a client decides for itself").
+ * answers 401 or 403, and never fails a game call because auth-service's
+ * introspection endpoint is unavailable (token-introspection.md, "What a
+ * client decides for itself"). The vault is another matter: a call that needs
+ * the injected agent token still answers 503 when auth-service cannot hand
+ * one over.
  *
  * The lane comes from auth-service's answer about the caller's token
  * (auth-design.md decisions 2 and 21): `interactive` for an active answer
@@ -15,15 +18,18 @@
  * verbatim by agent, fleet and navigation-service — and `background` for
  * everything else: automation-service's machine token, auth-service's own
  * anonymous poll, an expired or malformed token, two Authorization lines,
- * and a center that is down, slow or misconfigured. The gateway never reads
+ * `POST /register`'s account token, and a center that is down, slow or
+ * misconfigured. The gateway never reads
  * a token itself and never looks at `sub`: knowing Clerk's subject
  * conventions is auth-service's job alone.
  */
 
 import express from "express";
 import {
+  createIntrospector,
   createLaneDeriver,
   soleAuthorizationLine,
+  type Introspector,
   type Lane,
 } from "@v-m-pioneer-trading/introspection-client";
 import { GatewayConfig, gatewayConfigFromEnv } from "./config";
@@ -52,6 +58,49 @@ const CREDENTIAL_UNAVAILABLE: Record<TokenFailure, string> = {
  * 250 ms is well above a healthy center's round trip on the same host.
  */
 export const LANE_TIMEOUT_MS = 250;
+
+/**
+ * How often, at most, a failing center is reported. A lane that falls back to
+ * `background` is invisible from the outside: a rotated introspection
+ * secret or a URL with a stray trailing slash quietly demotes every operator,
+ * and nothing else in the system would say so. One line a minute says so
+ * without letting a flood of credentialed calls flood the log.
+ */
+export const CENTER_WARNING_INTERVAL_MS = 60_000;
+
+/**
+ * The introspector the lane deriver asks, wrapped so that an `unavailable`
+ * answer is noticed. The answer itself passes through untouched, and the
+ * warning names only where the center is — origin and path, never the
+ * token, the secret or any userinfo in the URL — because the client
+ * deliberately does not say which of its five failure modes it hit.
+ */
+function reportingUnavailable(inner: Introspector, url: string, warn: (line: string) => void): Introspector {
+  const parsed = new URL(url);
+  const where = `${parsed.origin}${parsed.pathname}`;
+  let lastWarnedAt = -Infinity;
+  let suppressed = 0;
+  return {
+    async introspect(token) {
+      const answer = await inner.introspect(token);
+      if (answer.state === "unavailable") {
+        const now = Date.now();
+        if (now - lastWarnedAt >= CENTER_WARNING_INTERVAL_MS) {
+          const more = suppressed > 0 ? ` (${suppressed} more since the last warning)` : "";
+          warn(
+            `st-gateway: auth-service introspection at ${where} is unavailable — unreachable, slow, non-2xx, ` +
+              `unreadable, or refusing AUTH_INTROSPECTION_SECRET; operators are queued as background${more}`,
+          );
+          lastWarnedAt = now;
+          suppressed = 0;
+        } else {
+          suppressed += 1;
+        }
+      }
+      return answer;
+    },
+  };
+}
 
 /**
  * The shared client's lanes are this gateway's queue classes, one for one.
@@ -123,11 +172,17 @@ export function createApp(config: GatewayConfig) {
     authServiceSharedSecret: config.authServiceSharedSecret,
     cacheTtlMs: config.authServiceTokenCacheMs,
   });
-  const laneDeriver = createLaneDeriver({
-    url: config.introspection.url,
-    secret: config.introspection.secret,
-    timeoutMs: LANE_TIMEOUT_MS,
-  });
+  const laneDeriver = createLaneDeriver(
+    reportingUnavailable(
+      createIntrospector({
+        url: config.introspection.url,
+        secret: config.introspection.secret,
+        timeoutMs: LANE_TIMEOUT_MS,
+      }),
+      config.introspection.url,
+      (line) => console.warn(line),
+    ),
+  );
 
   const health = (_req: express.Request, res: express.Response) => {
     res.json({ status: "ok" });
@@ -161,7 +216,14 @@ export function createApp(config: GatewayConfig) {
     // No line, several lines, or a malformed one is `background` with no
     // call to the center, so anonymous traffic never waits on auth-service.
     // X-Priority is not read: a lane is derived, never declared.
-    const priority = PRIORITY_FOR_LANE[await laneDeriver.derive(soleAuthorizationLine(req))];
+    //
+    // POST /register carries the caller's SpaceTraders *account* token, not a
+    // session: asking auth-service about it spends a round trip to learn
+    // nothing, and sends a SpaceTraders credential somewhere it has no
+    // business going. Registration is background, and the header is still
+    // forwarded byte for byte below.
+    const priority: Priority =
+      mode === "forward" ? "background" : PRIORITY_FOR_LANE[await laneDeriver.derive(soleAuthorizationLine(req))];
 
     if (mode === "forward") {
       const forwarded = req.header("Authorization");

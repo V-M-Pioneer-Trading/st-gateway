@@ -159,7 +159,8 @@ lane deriver:
 | … and auth-service is down, slow past 250 ms, answers non-2xx or nonsense, or refuses our secret | once | `background` |
 | none at all (auth-service's own poll, an anonymous read) | **no** | `background` |
 | not `Bearer` + one token: `Basic …`, `Bearer`, `Bearer `, `Bearer abc def` | **no** | `background` |
-| two or more `Authorization` lines, whatever they hold | **no** | `background` |
+| two or more `Authorization` lines, whatever they hold, or a line count that cannot be known (the header-count limit reached) | **no** | `background` |
+| anything, on `POST /register` (it carries the SpaceTraders account token, not a session; forwarded verbatim) | **no** | `background` |
 
 The lane follows `kind` as auth-service reports it; the gateway never looks at
 `sub`, and knows nothing of Clerk's subject prefixes. The line count comes
@@ -168,9 +169,11 @@ drops the rest, so reading the parsed header would let a caller choose which
 of two credentials picks its lane.
 
 **What it never does.** It never rejects, never answers 401, 403 or 503 for a
-caller's credential, and never fails a game call because auth-service is
-unavailable: a gateway that failed closed on the center would take the whole
-public read surface down with auth-service. It never waits on the center for
+caller's credential, and never fails a game call because auth-service's
+introspection endpoint is unavailable: a gateway that failed closed on the
+center would take the whole public read surface down with auth-service. (The
+vault is separate: a call that needs the injected agent token still answers
+`503` when auth-service cannot supply one — see the error table.) It never waits on the center for
 more than **250 ms** — well above a healthy round trip on the same host, and a
 quarter of what a client that *rejects* would allow itself, because a lane is a
 guess the gateway is willing to make without an answer. It asks at most once
@@ -276,6 +279,11 @@ Deliberate, not accidental:
   fairness cap and no aging. Sustained interactive load would hold background
   traffic indefinitely. Interactive traffic is one person's dashboard, so this
   is theoretical at today's load.
+- **A failing center is reported, not surfaced.** When introspection answers
+  nothing usable — a rotated `AUTH_INTROSPECTION_SECRET`, a URL with a stray
+  trailing slash — every operator is quietly queued as background. The gateway
+  logs one `console.warn` line a minute while it lasts, naming the endpoint
+  and never the token or the secret; nothing else says so.
 - **A hanging auth-service costs every credentialed call up to 250 ms.** The
   lane is decided before the call queues, and the gateway waits that long for
   an answer before settling for `background`. Anonymous calls never wait.
