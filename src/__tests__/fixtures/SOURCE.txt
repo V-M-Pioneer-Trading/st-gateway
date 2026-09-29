@@ -1,0 +1,37 @@
+introspection.json is vendored verbatim. It is not maintained here.
+
+  original    V-M-Pioneer-Trading/meta, path fixtures/introspection.json
+  meta commit 46c033e3101dad46c0336e7d3cd74642a62248ab
+  blob        a6bc10071ed9704f66cd635da4b413b0a74d4978
+  vendored    2026-09-29
+  version     4
+  cases       40 calling-service + 12 gateway = 52
+  bytes       53749
+  sha256      5fe6d77e1113c05af899e554db0723a06cf42c197f9eb46a8b93b2f3c682201c
+
+The commit above is on meta's main: the squash of V-M-Pioneer-Trading/meta#91
+("Two Authorization lines are never a credential: say why, and pin it
+(fixture v4)").
+
+st-gateway drives the twelve gatewayCases only. The forty calling-service
+cases describe a verdict (proceed, 401, 403, 503), and the gateway never
+reaches one: it picks a queue lane and nothing else. Those cases are driven by
+ts-introspection-client's own suite, which vendors the same version. The
+conformance test here skips them by name and asserts their count, so a case
+added upstream in either group fails here until someone decides what it
+means for the gateway.
+
+The sha256 is over the LF bytes of the blob as git stores it, which is what
+`git show <commit>:fixtures/introspection.json` prints.
+src/__tests__/lane.conformance.test.ts recomputes it on every run and fails if
+the vendored copy and this record disagree, so a hand-edit of the copy is a
+red test rather than silent drift.
+
+To re-vendor after meta changes the fixture:
+
+  git -C ../meta show HEAD:fixtures/introspection.json > src/__tests__/fixtures/introspection.json
+  node -e "const c=require('crypto'),f=require('fs');const b=f.readFileSync('src/__tests__/fixtures/introspection.json');console.log(b.length,c.createHash('sha256').update(b).digest('hex'))"
+
+then update the commit, blob, date, version, bytes and sha256 above, and the
+constants at the top of the conformance test. Change meta first; a copy that
+leads the original is drift pointing the other way.
