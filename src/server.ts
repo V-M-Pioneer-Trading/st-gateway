@@ -1,8 +1,40 @@
+/**
+ * @file st-gateway: every SpaceTraders call in the system, through one rate
+ * budget, with the one agent token injected.
+ *
+ * What this process decides about a caller is a queue lane, and nothing
+ * else. It never decides whether a caller may make a call — that happened
+ * once already, in the calling service, against the same auth-service this
+ * gateway asks — so it never rejects a request for its credential, never
+ * answers 401 or 403, and never fails a game call because auth-service's
+ * introspection endpoint is unavailable (token-introspection.md, "What a
+ * client decides for itself"). The vault is another matter: a call that needs
+ * the injected agent token still answers 503 when auth-service cannot hand
+ * one over.
+ *
+ * The lane comes from auth-service's answer about the caller's token
+ * (auth-design.md decisions 2 and 21): `interactive` for an active answer
+ * whose `kind` is `operator` — the dashboard's human session, forwarded
+ * verbatim by agent, fleet and navigation-service — and `background` for
+ * everything else: automation-service's machine token, auth-service's own
+ * anonymous poll, an expired or malformed token, two Authorization lines,
+ * `POST /register`'s account token, and a center that is down, slow or
+ * misconfigured. The gateway never reads
+ * a token itself and never looks at `sub`: knowing Clerk's subject
+ * conventions is auth-service's job alone.
+ */
+
 import express from "express";
-import { GatewayConfig, configFromEnv, requireAuthServiceSharedSecret, requireClerkJwtKey } from "./config";
-import { TokenBucket } from "./tokenBucket";
+import {
+  createIntrospector,
+  createLaneDeriver,
+  soleAuthorizationLine,
+  type Introspector,
+  type Lane,
+} from "@v-m-pioneer-trading/introspection-client";
+import { GatewayConfig, gatewayConfigFromEnv } from "./config";
+import { TokenBucket, type Priority } from "./tokenBucket";
 import { createAuthTokenClient, type TokenFailure } from "./authServiceClient";
-import { createPriorityDeriver } from "./auth";
 
 const RETRYABLE_5XX = new Set([500, 502, 503, 504]);
 /** Upstream response headers worth passing back — pacing signals callers need. */
@@ -12,6 +44,73 @@ const FORWARDED_HEADERS = ["retry-after", "x-ratelimit-limit", "x-ratelimit-rema
 const CREDENTIAL_UNAVAILABLE: Record<TokenFailure, string> = {
   unconfigured: "SpaceTraders credential not configured",
   unavailable: "auth-service unavailable: cannot obtain a SpaceTraders credential",
+};
+
+/**
+ * The most a lane decision may add to a proxied call. A center that has not
+ * answered by then yields `background`, the lane an anonymous caller gets
+ * anyway, and the call proceeds.
+ *
+ * Not the shared client's 1000 ms default, which is sized for a decision that
+ * rejects, where waiting beats a wrong answer. A lane is a guess the gateway
+ * is willing to make without the center, so a hanging auth-service should
+ * cost every credentialed game call a quarter of a second, not a whole one.
+ * 250 ms is well above a healthy center's round trip on the same host.
+ */
+export const LANE_TIMEOUT_MS = 250;
+
+/**
+ * How often, at most, a failing center is reported. A lane that falls back to
+ * `background` is invisible from the outside: a rotated introspection
+ * secret or a URL with a stray trailing slash quietly demotes every operator,
+ * and nothing else in the system would say so. One line a minute says so
+ * without letting a flood of credentialed calls flood the log.
+ */
+export const CENTER_WARNING_INTERVAL_MS = 60_000;
+
+/**
+ * The introspector the lane deriver asks, wrapped so that an `unavailable`
+ * answer is noticed. The answer itself passes through untouched, and the
+ * warning names only where the center is — origin and path, never the
+ * token, the secret or any userinfo in the URL — because the client
+ * deliberately does not say which of its five failure modes it hit.
+ */
+function reportingUnavailable(inner: Introspector, url: string, warn: (line: string) => void): Introspector {
+  const parsed = new URL(url);
+  const where = `${parsed.origin}${parsed.pathname}`;
+  let lastWarnedAt = -Infinity;
+  let suppressed = 0;
+  return {
+    async introspect(token) {
+      const answer = await inner.introspect(token);
+      if (answer.state === "unavailable") {
+        const now = Date.now();
+        if (now - lastWarnedAt >= CENTER_WARNING_INTERVAL_MS) {
+          const more = suppressed > 0 ? ` (${suppressed} more since the last warning)` : "";
+          warn(
+            `st-gateway: auth-service introspection at ${where} is unavailable — unreachable, slow, non-2xx, ` +
+              `unreadable, or refusing AUTH_INTROSPECTION_SECRET; operators are queued as background${more}`,
+          );
+          lastWarnedAt = now;
+          suppressed = 0;
+        } else {
+          suppressed += 1;
+        }
+      }
+      return answer;
+    },
+  };
+}
+
+/**
+ * The shared client's lanes are this gateway's queue classes, one for one.
+ * Spelled out rather than cast so that a change to either union — a third
+ * queue here, a third lane there — is a compile error at this line instead
+ * of a lane silently landing in a queue that does not exist.
+ */
+const PRIORITY_FOR_LANE: Record<Lane, Priority> = {
+  interactive: "interactive",
+  background: "background",
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -73,10 +172,17 @@ export function createApp(config: GatewayConfig) {
     authServiceSharedSecret: config.authServiceSharedSecret,
     cacheTtlMs: config.authServiceTokenCacheMs,
   });
-  const priorityDeriver = createPriorityDeriver({
-    clerkJwtKeyPem: config.clerkJwtKeyPem,
-    clerkIssuer: config.clerkIssuer,
-  });
+  const laneDeriver = createLaneDeriver(
+    reportingUnavailable(
+      createIntrospector({
+        url: config.introspection.url,
+        secret: config.introspection.secret,
+        timeoutMs: LANE_TIMEOUT_MS,
+      }),
+      config.introspection.url,
+      (line) => console.warn(line),
+    ),
+  );
 
   const health = (_req: express.Request, res: express.Response) => {
     res.json({ status: "ok" });
@@ -101,11 +207,23 @@ export function createApp(config: GatewayConfig) {
     // those are only retried for methods without side effects — at-most-once for
     // POSTs (purchases, sells) is worth more than a transparent retry.
     const sideEffectFree = req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS";
-    // decision 2: priority comes from a verified Clerk identity, never a
-    // client-supplied header — see auth.ts for what "verified" resolves to
-    // and the known interim gap (every caller degrades to background until
-    // increment 3 Stage 5 forwards a real Clerk token here).
-    const priority = await priorityDeriver.derive(req.header("Authorization"));
+    // The lane, once per inbound request and never per attempt: retries
+    // below reuse it, so one proxied call asks auth-service at most once.
+    // derive() never rejects and never throws, and is bounded by
+    // LANE_TIMEOUT_MS. soleAuthorizationLine, not req.header(): Node keeps
+    // the first of two Authorization lines and drops the second, and a
+    // caller who sent two must not get to choose which one picks the lane.
+    // No line, several lines, or a malformed one is `background` with no
+    // call to the center, so anonymous traffic never waits on auth-service.
+    // X-Priority is not read: a lane is derived, never declared.
+    //
+    // POST /register carries the caller's SpaceTraders *account* token, not a
+    // session: asking auth-service about it spends a round trip to learn
+    // nothing, and sends a SpaceTraders credential somewhere it has no
+    // business going. Registration is background, and the header is still
+    // forwarded byte for byte below.
+    const priority: Priority =
+      mode === "forward" ? "background" : PRIORITY_FOR_LANE[await laneDeriver.derive(soleAuthorizationLine(req))];
 
     if (mode === "forward") {
       const forwarded = req.header("Authorization");
@@ -223,11 +341,11 @@ export function createApp(config: GatewayConfig) {
 }
 
 if (require.main === module) {
-  const config: GatewayConfig = {
-    ...configFromEnv(),
-    authServiceSharedSecret: requireAuthServiceSharedSecret(),
-    clerkJwtKeyPem: requireClerkJwtKey(),
-  };
+  // Throws, before the port is bound, on a bad number or a missing
+  // AUTH_SERVICE_SHARED_SECRET, AUTH_INTROSPECTION_URL or
+  // AUTH_INTROSPECTION_SECRET. Any CLERK_* variables still in the
+  // environment are ignored.
+  const config: GatewayConfig = gatewayConfigFromEnv();
   createApp(config).listen(config.port, () => {
     console.log(`st-gateway listening on http://localhost:${config.port}`);
   });

@@ -1,0 +1,722 @@
+{
+  "$comment": "Canonical token-introspection conditions: what auth-service (the center) answers, and what a calling service must answer its own caller for each. Source of truth for the conformance tests in the TS introspection client package (fleet-service, automation-service, st-gateway), agent-service (Go) and navigation-service (Java), which vendor this file verbatim. See ../docs/design/token-introspection.md and auth-design.md decision 21. DECIDED 2026-09-20, NOT SHIPPED: no service behaves this way yet — rollout is meta#80. Assertion vocabulary: a case is a route declaration, an inbound Authorization header, a stubbed center, and the expected outcome. `route.requires` is \"none\" (no credential declared), \"session\" (any verified session) or a scope literal. `expect.outcome` is \"proceed\" (the middleware ran the handler) or \"reject\". `expect.identity` is the {sub, kind, scopes} handed to the handler, or null for a visitor; `kind` is the center's answer and must be used verbatim, never re-derived from the `sub` prefix, and `scopes` is the `scope` string split on whitespace RUNS with empties discarded, matching every verifier live today. `expect.centerCalls` is how many HTTP requests the client made to the center for this one inbound request — 0 and 1 are both assertions, and 2 fails. An unknown key in `expect` must fail the case rather than be skipped, or a copy that falls behind quietly checks less. No case may be satisfiable by an empty or absent answer: every rejection asserts its exact message, every proceed asserts the identity, and every case asserts the call count (meta#79). VERSION 2 (2026-09-21, owner's delegate) adds cases and changes none: default-deny applies to MUTATING methods only, `GET`, `HEAD` and `OPTIONS` being the safe methods of RFC 9110 §9.2.1, so a safe method on a route declaring \"none\" proceeds as a visitor instead of answering 500. `route.method` is the method the request will actually be handled as — never a method-override header, and for a framework that dispatches HEAD to the GET handler (Express does) a HEAD of a route declared for GET arrives here as the requirement GET declared. It is compared case-insensitively; scope literals are compared exactly, and the bearer scheme case-insensitively. THE EXEMPTION IS FROM DEFAULT-DENY ONLY: a safe method on a route that DID declare a session or a scope is enforced exactly as a POST is. Read \"none\" precisely: it means the route DECLARED that no credential is needed. It is not the same thing as a route an adapter could find no declaration for — \"undeclared\" has no representation in this file, and an adapter must treat a resolver miss as a loud failure (the 500 above) and never as \"none\". Everything about how an adapter binds a requirement to a route — prefix-mounted routers, trailing slashes, case-variant paths, parameterised paths, `app.all` handlers answering OPTIONS — is outside this file's reach and is the adapter's own obligation to test. VERSION 3 (2026-09-25, meta#87) adds cases and changes none: an active answer may leave the `scope` key out, as RFC 7662 allows, and a client reads the absence exactly as `\"scope\":\"\"` — no scopes, never a malformed answer. The center itself always sends the key (auth-service#4), so these cases are a client's obligation only and are not ones the center can produce. VERSION 4 (2026-09-26) adds cases and changes none: `request.authorization` is EITHER a string — one `Authorization` header line, or null for none — OR an array of two or more strings, each element one header line in the order sent, an empty string being an empty line. More than one `Authorization` line, whatever the lines hold, is no credential, and the center is not called. The count comes from the raw header list: never from a value joined with \", \" and then split into parts (Go's `Header.Values` and Tomcat's `getHeaders` keep every line, and joining `Bearer a` with an empty second line invents the token `a,`), and never from a parser that keeps one line and drops the rest (Node's HTTP parser discards duplicate `authorization` lines and keeps the first; only `req.rawHeaders` shows how many arrived). The file holds forty calling-service cases and twelve gateway cases, fifty-two in all.",
+  "version": 4,
+  "contract": {
+    "endpoint": {
+      "method": "POST",
+      "path": "/auth/v1/introspect",
+      "contentType": "application/x-www-form-urlencoded",
+      "bodyTemplate": "token=<jwt>",
+      "secretHeader": "X-Introspection-Secret"
+    },
+    "env": {
+      "url": "AUTH_INTROSPECTION_URL",
+      "secret": "AUTH_INTROSPECTION_SECRET"
+    },
+    "clientTimeoutMs": 1000,
+    "retries": 0,
+    "errorEnvelope": "{\"error\":{\"message\":\"…\"}}",
+    "messages": {
+      "missingToken": "a bearer token is required",
+      "invalidSession": "invalid or expired session",
+      "missingScope": "this action requires a scope this session does not carry",
+      "undeclaredRoute": "this route declares no required scope",
+      "centerUnavailable": "the authentication service could not process this request"
+    },
+    "$messagesComment": "The first three are quoted from the verifiers live today in agent-service/src/api/auth.go, fleet-service/src/auth.ts, auth-service/src/api/auth.go and navigation-service ClerkAuthFilter.java, and must stay byte-identical — the family envelope and these exact sentences are why command-interface needs one parser for every backend's auth rejections, including navigation-service, which emits RFC 9457 everywhere else and makes a deliberate exception here. automation-service's 403 names the scope today; it converges on `missingScope` as it migrates. The last two are new with decision 21, both fixed by the owner on 2026-09-20. `undeclaredRoute` is a 500, not a 403, because it reports our own routing-table defect rather than anything the caller can fix. `centerUnavailable` covers all five failure conditions — unreachable, timed out, non-2xx, malformed body, and the center rejecting OUR caller secret — which is why it says `could not process` rather than anything about answering: in three of the five the center did answer. It must not collide with st-gateway's `SpaceTraders credential not configured`, the one 503 sentence automation-service's failure classifier keys on to mean an operator must act.",
+    "$tokenComment": "A calling service never parses, decodes or validates the token. The strings below are deliberately not valid JWTs: a client that looks inside one, or rejects one for being unparseable, fails these cases by answering before the center is asked."
+  },
+  "cases": [
+    {
+      "name": "visitor-on-public-get",
+      "why": "The anonymous read surface (auth-design.md decision 2). No credential was presented, so there is nothing to introspect and the center must not be touched — a client that calls it anyway puts a synchronous dependency in front of every public page load and takes the dashboard down with auth-service.",
+      "route": { "method": "GET", "requires": "none" },
+      "request": { "authorization": null },
+      "center": { "notCalled": true },
+      "expect": { "outcome": "proceed", "identity": null, "centerCalls": 0 }
+    },
+    {
+      "name": "operator-on-public-get",
+      "why": "A public GET that does carry a token: the center IS called, and the verified identity reaches the handler. navigation-service's live-fetch rule and automation-service's actor recording both depend on knowing who a caller is on a route that would have served them anonymously. A client that short-circuits every GET serves this request correctly and silently loses the identity.",
+      "route": { "method": "GET", "requires": "none" },
+      "request": { "authorization": "Bearer operator.token.one" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "proceed",
+        "identity": {
+          "sub": "user_31qP8k2cQeXampleOperator",
+          "kind": "operator",
+          "scopes": ["fleet:control"]
+        },
+        "centerCalls": 1,
+        "centerRequest": {
+          "method": "POST",
+          "path": "/auth/v1/introspect",
+          "contentType": "application/x-www-form-urlencoded",
+          "body": "token=operator.token.one",
+          "headers": { "X-Introspection-Secret": "<AUTH_INTROSPECTION_SECRET>" }
+        }
+      }
+    },
+    {
+      "name": "no-header-on-guarded-route",
+      "why": "The declared-scope case with nothing presented. 401 and the family's own sentence, and the center is never asked: an unauthenticated flood must not become a flood against the center.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": null },
+      "center": { "notCalled": true },
+      "expect": {
+        "outcome": "reject",
+        "status": 401,
+        "message": "a bearer token is required",
+        "centerCalls": 0
+      }
+    },
+    {
+      "name": "non-bearer-scheme-on-guarded-route",
+      "why": "`Authorization: Basic …` is not a bearer token and never becomes one. It reads as no credential at all — the same 401 and the same sentence as a missing header, matching every verifier live today — all five key on the scheme case-insensitively and discard anything else. A client that forwards the raw header value, or the base64 blob after the scheme, calls the center with something that is not a token and turns a 401 into a 503 the first time the center is slow.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Basic b3BlcmF0b3I6aHVudGVyMg==" },
+      "center": { "notCalled": true },
+      "expect": {
+        "outcome": "reject",
+        "status": 401,
+        "message": "a bearer token is required",
+        "centerCalls": 0
+      }
+    },
+    {
+      "name": "inactive-token-on-public-get",
+      "why": "The rule that matters most on a public route: a presented credential that does not verify is a 401 on every method, never a quiet downgrade to visitor. Downgrading would let an expired session read the public surface while hiding the fact that its token died, and would hide a misconfigured trust anchor in the center. navigation-service already states this as an invariant; decision 21 does not relax it.",
+      "route": { "method": "GET", "requires": "none" },
+      "request": { "authorization": "Bearer expired.token.one" },
+      "center": { "status": 200, "body": "{\"active\":false}" },
+      "expect": {
+        "outcome": "reject",
+        "status": 401,
+        "message": "invalid or expired session",
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "inactive-token-on-guarded-route",
+      "why": "The same verdict on a mutating route, stated separately because the two travel through different branches of a middleware that splits on method. The message is the invalid-session one, not the missing-token one: something was presented and it was bad.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer forged.token.one" },
+      "center": { "status": 200, "body": "{\"active\":false}" },
+      "expect": {
+        "outcome": "reject",
+        "status": 401,
+        "message": "invalid or expired session",
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "session-route-with-no-header",
+      "why": "The middle tier: a route that needs a verified session and no particular scope — agent-service's live reads under decision 18. Nothing was presented, so 401 and the missing-token sentence, and the center is not asked. A client that folds `session` into `none` serves this request anonymously, which is the hole decision 18 exists to close.",
+      "route": { "method": "GET", "requires": "session" },
+      "request": { "authorization": null },
+      "center": { "notCalled": true },
+      "expect": {
+        "outcome": "reject",
+        "status": 401,
+        "message": "a bearer token is required",
+        "centerCalls": 0
+      }
+    },
+    {
+      "name": "session-route-with-inactive-token",
+      "why": "The same tier with a token that does not verify. 401 and the invalid-session sentence, not the missing-token one — something was presented and it was bad. A client that treats `session` as `none` proceeds here too, and an expired operator reads a guarded surface with no indication their credential died.",
+      "route": { "method": "GET", "requires": "session" },
+      "request": { "authorization": "Bearer expired.token.two" },
+      "center": { "status": 200, "body": "{\"active\":false}" },
+      "expect": {
+        "outcome": "reject",
+        "status": 401,
+        "message": "invalid or expired session",
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "session-route-with-scopeless-token",
+      "why": "The case that pins the tier as a tier. A verified session carrying NO scopes at all is allowed through, because the route asked for a session and nothing more — a guest operator who may watch but not act. A client that implements `session` as \"any scope will do\" rejects this; one that implements it as `none` cannot fail the two cases above. Also the empty-`scope` parse: the identity must carry an empty list, never a list holding one empty string.",
+      "route": { "method": "GET", "requires": "session" },
+      "request": { "authorization": "Bearer guest.token.one" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleGuest\",\"scope\":\"\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "proceed",
+        "identity": {
+          "sub": "user_31qP8k2cQeXampleGuest",
+          "kind": "operator",
+          "scopes": []
+        },
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "session-route-with-token-lacking-scope-key",
+      "why": "The previous case with the `scope` KEY absent rather than empty. RFC 7662 makes `scope` OPTIONAL on an active answer, and until auth-service#4 the center left it out for a token carrying no scopes. A client that reads the missing key as a malformed answer turns every scopeless session into a 503 (ts-introspection-client 1.0.0–1.1.0 did, in production). Absent means no scopes: the identity carries an empty list, exactly as for `\"scope\":\"\"`. A `scope` that is present but not a string is still a center the client does not understand.",
+      "route": { "method": "GET", "requires": "session" },
+      "request": { "authorization": "Bearer guest.token.two" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleGuest\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "proceed",
+        "identity": {
+          "sub": "user_31qP8k2cQeXampleGuest",
+          "kind": "operator",
+          "scopes": []
+        },
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "scoped-route-with-token-lacking-scope-key",
+      "why": "The partner of the case above, so it cannot be passed by reading an absent `scope` as \"any scope\" or by skipping the scope check when the key is missing. No scopes means the route's scope is missing: 403 with the generic sentence, not 503 and not a proceed.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer guest.token.two" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleGuest\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "reject",
+        "status": 403,
+        "message": "this action requires a scope this session does not carry",
+        "messageMustNotContain": ["fleet:control"],
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "active-with-required-scope",
+      "why": "The ordinary authorized mutation. Asserts the identity reaches the handler, not merely that the request was allowed: automation-service writes detail.actor from it and a middleware that authorizes without publishing the identity passes a status-only assertion.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer operator.token.two" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "proceed",
+        "identity": {
+          "sub": "user_31qP8k2cQeXampleOperator",
+          "kind": "operator",
+          "scopes": ["fleet:control"]
+        },
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "active-without-required-scope",
+      "why": "403 rather than 401 — the session is valid, so re-authenticating would only loop. The message is generic and must NOT name the scope the route wanted: naming it turns every guarded route into a directory of the permissions worth stealing. automation-service names it today (`this action requires the \"fleet:control\" scope`) and is the one that has to change.",
+      "route": { "method": "POST", "requires": "agent:reset" },
+      "request": { "authorization": "Bearer operator.token.three" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "reject",
+        "status": 403,
+        "message": "this action requires a scope this session does not carry",
+        "messageMustNotContain": ["agent:reset", "fleet:control"],
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "active-with-multi-value-scope",
+      "why": "`scope` is one space-delimited string, returned verbatim by the center whether the Clerk claim was a string or an array. A client comparing the whole string to the required literal passes every single-scope case above and fails here — which is the operator's real token, carrying all three scopes.",
+      "route": { "method": "POST", "requires": "agent:reset" },
+      "request": { "authorization": "Bearer operator.token.four" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control agent:reset universe:refresh\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "proceed",
+        "identity": {
+          "sub": "user_31qP8k2cQeXampleOperator",
+          "kind": "operator",
+          "scopes": ["fleet:control", "agent:reset", "universe:refresh"]
+        },
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "active-with-irregular-scope-whitespace",
+      "why": "`scope` is space-delimited by convention, not by guarantee, and the center returns it verbatim from the Clerk claim. All five verifiers live today split on whitespace RUNS and discard empties (`strings.Fields` in Go, `/\\s+/` in TS, `\\\\s+` in Java). A client that splits on a single space literal gets [\"fleet:control\", \"\", \"agent:reset\\tuniverse:refresh\", \"\"] here, fails to find the required scope at all, and answers 403 for a token that carries it. The leading run and the trailing space additionally catch a splitter that keeps empties — which the identity assertion catches even where the authorization check would have passed by accident.",
+      "route": { "method": "POST", "requires": "universe:refresh" },
+      "request": { "authorization": "Bearer operator.token.twelve" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control  agent:reset\\tuniverse:refresh \",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "proceed",
+        "identity": {
+          "sub": "user_31qP8k2cQeXampleOperator",
+          "kind": "operator",
+          "scopes": ["fleet:control", "agent:reset", "universe:refresh"]
+        },
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "active-machine-kind",
+      "why": "automation-service's M2M token (decision 19). It authorizes exactly like an operator's session — the scopes are baked into the token — but the handler must be able to tell the two apart: automation-service's knob-class fence restricts a machine caller to `policy` knobs. The discriminator is `kind`, never the presence of a header, because after decision 21 every caller presents one. A client that drops `kind` opens the alert and model knobs to the AI supervisor's path.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer machine.token.one" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"mch_31qP8k2cQeXampleMachine\",\"scope\":\"fleet:control agent:reset\",\"exp\":4102444800,\"kind\":\"machine\"}"
+      },
+      "expect": {
+        "outcome": "proceed",
+        "identity": {
+          "sub": "mch_31qP8k2cQeXampleMachine",
+          "kind": "machine",
+          "scopes": ["fleet:control", "agent:reset"]
+        },
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "kind-disagrees-with-sub-prefix",
+      "why": "The center's `kind` is the answer, and a client must not re-derive it. This pairing — a `user_` subject reported as `machine` — is deliberately impossible in production, because the center computes `kind` from that very prefix. It exists only to pin WHO OWNS THE RULE: every other case agrees with itself, so a client that kept `sub.startsWith(\"user_\")` passes all of them unchanged and this one fails. That is not hypothetical — it is exactly what st-gateway's deriver does today, and automation-service's knob-class fence keys on the result. If the center's convention ever changes (a third `kind`, a new Clerk subject prefix), one deploy of the center must be enough.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer disagreeing.token.one" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"machine\"}"
+      },
+      "expect": {
+        "outcome": "proceed",
+        "identity": {
+          "sub": "user_31qP8k2cQeXampleOperator",
+          "kind": "machine",
+          "scopes": ["fleet:control"]
+        },
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "mutating-route-with-no-declared-scope",
+      "why": "Default-deny, and the whole structural point of decision 21: a route on a mutating method (anything but GET, HEAD or OPTIONS, which RFC 9110 calls safe) that declares nothing is refused even for a token that would satisfy any scope asked of it, which is what makes another meta#71 (an unauthenticated POST nobody remembered to guard) impossible rather than merely unlikely. It is a 500 and not a 403 (owner's decision, 2026-09-20) because it is OUR defect and the caller can never fix it: automation-service maps a 403 to a terminal `credentials` verdict, so a 403 here would abandon the target and send the operator to check Clerk scopes for a bug in our own routing table. The center is not called — a route that can never be authorized has nothing to verify, and a misdeclared route must not become load on the center.",
+      "route": { "method": "POST", "requires": "none" },
+      "request": { "authorization": "Bearer operator.token.five" },
+      "center": { "notCalled": true },
+      "expect": {
+        "outcome": "reject",
+        "status": 500,
+        "message": "this route declares no required scope",
+        "centerCalls": 0
+      }
+    },
+    {
+      "name": "mutating-route-with-no-declared-scope-and-no-header",
+      "why": "The same 500, with nothing presented. This is the rule-ORDER assertion: default-deny is evaluated BEFORE the Authorization header is looked at, so a client that checks the header first answers 401 `a bearer token is required` here and fails. Order matters because the two answers send an operator to different places — 401 says \"sign in\", 500 says \"this route is misdeclared\" — and the credential a caller did or did not bring says nothing about a route that declares no scope.",
+      "route": { "method": "POST", "requires": "none" },
+      "request": { "authorization": null },
+      "center": { "notCalled": true },
+      "expect": {
+        "outcome": "reject",
+        "status": 500,
+        "message": "this route declares no required scope",
+        "centerCalls": 0
+      }
+    },
+    {
+      "name": "mutating-route-with-no-declared-scope-and-inactive-token",
+      "why": "The third arm of the same rule, and the one that also pins `centerCalls: 0`. A client that introspected first would get `active:false` back and answer 401 `invalid or expired session` — a true statement about the token and the wrong answer about the request, plus a call to the center that a misdeclared route should never be able to generate. The answer is identical for a valid token, an invalid one and none at all.",
+      "route": { "method": "POST", "requires": "none" },
+      "request": { "authorization": "Bearer expired.token.three" },
+      "center": { "notCalled": true },
+      "expect": {
+        "outcome": "reject",
+        "status": 500,
+        "message": "this route declares no required scope",
+        "centerCalls": 0
+      }
+    },
+    {
+      "name": "center-times-out",
+      "why": "The center answers, but after the 1 s client timeout. 503, one sentence, and exactly ONE call: a retry against a center that is down doubles the latency of every failing request and changes nothing. `centerCalls: 1` is the assertion that catches a helpful retry loop, which no status assertion would.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer operator.token.six" },
+      "center": {
+        "delayMs": 3000,
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "reject",
+        "status": 503,
+        "message": "the authentication service could not process this request",
+        "centerCalls": 1,
+        "maxElapsedMs": 2000
+      }
+    },
+    {
+      "name": "center-unreachable",
+      "why": "No response at all — connection refused, DNS failure, or a socket that died mid-body. Fail-closed: the mutation does not proceed, and it is a 503 rather than a 401, because nothing was learned about the caller's token. automation-service's classifier maps this to `unavailable`, so an auth outage costs a tick and never a target's retry budget.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer operator.token.seven" },
+      "center": { "transport": "no-response" },
+      "expect": {
+        "outcome": "reject",
+        "status": 503,
+        "message": "the authentication service could not process this request",
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "center-returns-500",
+      "why": "The center is reachable and broken. Same answer as unreachable, deliberately: the caller's remedy is identical and the distinction is the center's own business, in the center's own logs. A client that relays 500 makes an auth outage look like a bug in the service the operator is actually calling.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer operator.token.eight" },
+      "center": { "status": 500, "body": "{\"error\":{\"message\":\"sql: database is locked\"}}" },
+      "expect": {
+        "outcome": "reject",
+        "status": 503,
+        "message": "the authentication service could not process this request",
+        "messageMustNotContain": ["sql", "database"],
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "center-rejects-our-caller-secret",
+      "why": "The center answers 401 — about OUR introspection secret, not about the end user's token. It must surface as 503, never as 401. Relaying it would tell an operator their session had expired when in fact a stack was deployed without AUTH_INTROSPECTION_SECRET or with a rotated one, and they would sign in again, repeatedly, against a service that can never accept them. This is the single easiest case for a lazy client to get wrong, because relaying the upstream status is the habit `upstream-errors.md` teaches for a different upstream.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer operator.token.nine" },
+      "center": { "status": 401, "body": "{\"error\":{\"message\":\"a valid introspection secret is required\"}}" },
+      "expect": {
+        "outcome": "reject",
+        "status": 503,
+        "message": "the authentication service could not process this request",
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "center-returns-malformed-json",
+      "why": "A 200 whose body is not the contract — a proxy error page, a truncated write, a half-deployed center. Unparseable is not `active:false`: treating it as an inactive token turns an outage into a fleet-wide 401 storm and tells the operator their credential is broken when it is not.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer operator.token.ten" },
+      "center": { "status": 200, "body": "<html><body>503 Service Unavailable</body></html>" },
+      "expect": {
+        "outcome": "reject",
+        "status": 503,
+        "message": "the authentication service could not process this request",
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "token-on-public-get-while-center-is-down",
+      "why": "The case that decides what fail-closed means for the public surface. A visitor with no header keeps reading (see `visitor-on-public-get`); a caller who DID present a token gets 503, not a silent downgrade to visitor. Downgrading would be a read served under an identity nobody verified, and — worse — an operator would see the anonymous view with no indication that anything was wrong.",
+      "route": { "method": "GET", "requires": "none" },
+      "request": { "authorization": "Bearer operator.token.eleven" },
+      "center": { "transport": "no-response" },
+      "expect": {
+        "outcome": "reject",
+        "status": 503,
+        "message": "the authentication service could not process this request",
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "head-on-public-get",
+      "why": "HEAD is a safe method (RFC 9110) and is exempt from default-deny exactly as GET is: it is the same route, and a framework that dispatches HEAD to the GET handler — Express does — would otherwise answer 500 for the cheap form of a page it serves anonymously. No credential, nothing to introspect, no call to the center. A client that treats every non-GET method as mutating fails here and breaks every health probe and link checker (owner's delegate, 2026-09-21).",
+      "route": { "method": "HEAD", "requires": "none" },
+      "request": { "authorization": null },
+      "center": { "notCalled": true },
+      "expect": { "outcome": "proceed", "identity": null, "centerCalls": 0 }
+    },
+    {
+      "name": "head-on-guarded-route-with-no-header",
+      "why": "The other half of the HEAD rule: exempting HEAD from default-deny must not exempt it from a requirement a route DID declare. 401, and the center is not asked, because response headers leak existence, sizes and ETags and a credential-free read of them is the hole the exemption would otherwise open. Note what this case does NOT test. The fixture hands `route.requires` to the client directly, already resolved; it says nothing about how an adapter arrived at it. BINDING A REQUIREMENT TO THE RIGHT ROUTE IS AN ADAPTER OBLIGATION THE FIXTURE CANNOT REACH — that HEAD /x is governed by what GET /x declared, that a prefix-mounted router, a trailing slash, a case-variant path or a parameterised path still find their route's declaration, and above all that a route with NO declaration is never served. A client can pass every case here and still be wide open if its adapter resolves requirements by looking up a string it may miss. The remedy is to bind the declaration where the framework's own matcher binds the handler, and to refuse at startup to register a handler that carries none; see the adapter's own tests, not this file.",
+      "route": { "method": "HEAD", "requires": "fleet:control" },
+      "request": { "authorization": null },
+      "center": { "notCalled": true },
+      "expect": {
+        "outcome": "reject",
+        "status": 401,
+        "message": "a bearer token is required",
+        "centerCalls": 0
+      }
+    },
+    {
+      "name": "options-with-no-declared-scope",
+      "why": "OPTIONS is safe too, and a CORS preflight carries no Authorization header by definition — the browser strips it. Answering 500 here breaks every cross-origin call from the dashboard before the real request is ever sent, and the failure reads as a server fault rather than a policy one. An OPTIONS with no declared requirement proceeds as a visitor and the center is not called (owner's delegate, 2026-09-21).",
+      "route": { "method": "OPTIONS", "requires": "none" },
+      "request": { "authorization": null },
+      "center": { "notCalled": true },
+      "expect": { "outcome": "proceed", "identity": null, "centerCalls": 0 }
+    },
+    {
+      "name": "active-with-scope-that-is-a-prefix-of-required",
+      "why": "The required scope is \"fleet:control\"; the session carries \"fleet:control:read\" and \"fleet\", neither of which is it. Scope matching is exact membership of the split list, never a prefix, a namespace walk or a substring test. A client that matched on prefixes would let a deliberately narrowed read scope drive the fleet, and one that matched substrings the other way would be satisfied by any longer name. 403, and the message still names nothing.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer operator.token.thirteen" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control:read fleet\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "reject",
+        "status": 403,
+        "message": "this action requires a scope this session does not carry",
+        "messageMustNotContain": ["fleet:control", "fleet:control:read", "fleet"],
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "active-with-scope-differing-only-in-case",
+      "why": "Scope comparison is case-SENSITIVE. Clerk issues these literals verbatim and \"FLEET:CONTROL\" is not \"fleet:control\"; a client that lower-cases either side accepts a scope nobody granted and makes the authorization surface depend on how a claim happened to be typed. This is the one comparison in the whole policy that is not case-insensitive — the bearer scheme and the method are — so it is pinned separately. 403.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer operator.token.fourteen" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"FLEET:CONTROL\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "reject",
+        "status": 403,
+        "message": "this action requires a scope this session does not carry",
+        "messageMustNotContain": ["fleet:control", "FLEET:CONTROL"],
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "bearer-with-empty-token",
+      "why": "\"Bearer \" with nothing after it is no credential at all, not an empty token to introspect. A client that forwards it POSTs \"token=\" to the center, spends a round trip, and converts a 401 into a 503 the first time the center is slow — and on a public GET it would turn a visitor into an error. 401, the missing-token sentence, and centerCalls 0 is the assertion that catches the forwarding client, since the center would have answered active:false anyway.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer " },
+      "center": { "notCalled": true },
+      "expect": {
+        "outcome": "reject",
+        "status": 401,
+        "message": "a bearer token is required",
+        "centerCalls": 0
+      }
+    },
+    {
+      "name": "bearer-with-internal-whitespace",
+      "why": "\"Bearer abc def\" is not a bearer token with a space in it: RFC 6750's credentials are a single token68, so the header is malformed and reads as no credential. The trap is a client that splits on whitespace and rejoins the remainder — it invents the token \"abcdef\", which nobody issued, and asks the center about it. A header is never concatenated into a token. 401 and no call to the center.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer abc def" },
+      "center": { "notCalled": true },
+      "expect": {
+        "outcome": "reject",
+        "status": 401,
+        "message": "a bearer token is required",
+        "centerCalls": 0
+      }
+    },
+    {
+      "name": "two-authorization-lines",
+      "why": "Two `Authorization` lines, each a well-formed bearer credential on its own, are no credential at all: 401, the missing-token sentence, and the center is not asked. Picking one lets a caller choose which of two credentials a proxy sees a service verify — a proxy that checks or logs one line while the service verifies the other is the hazard. The count must come from the raw header list. Node's HTTP parser discards duplicate `authorization` lines and keeps the first, so an Express client reading `req.headers.authorization` sees `Bearer a` and asks the center about `a`; only `req.rawHeaders` shows two lines arrived. Go and Java keep both lines, and a client that joins them with \", \" and counts parts gets this one right by accident and the next case wrong.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": ["Bearer a", "Bearer b"] },
+      "center": { "notCalled": true },
+      "expect": {
+        "outcome": "reject",
+        "status": 401,
+        "message": "a bearer token is required",
+        "centerCalls": 0
+      }
+    },
+    {
+      "name": "two-authorization-lines-second-empty",
+      "why": "The case that caught join-then-count in practice (navigation-service#22, agent-service#27). Go's `Header.Values` and Tomcat's `getHeaders` return both lines; joining them with \", \" gives `Bearer a, `, which trims and splits into exactly two parts, and the client asks the center about the token `a,` — which nobody sent. An empty line is still a line: two lines are no credential whatever they hold. 401, the missing-token sentence, and no call to the center.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": ["Bearer a", ""] },
+      "center": { "notCalled": true },
+      "expect": {
+        "outcome": "reject",
+        "status": 401,
+        "message": "a bearer token is required",
+        "centerCalls": 0
+      }
+    },
+    {
+      "name": "two-authorization-lines-on-public-get",
+      "why": "No credential is no credential on a public route too, so two lines on a GET declaring \"none\" proceed as a visitor, identity null, and the center is not asked — the same answer as no header at all. A client that rejects here has made a malformed header worse than a missing one; a client that picks a line and introspects it turns a visitor into whichever operator the first line names, and puts the center on the path of a public read.",
+      "route": { "method": "GET", "requires": "none" },
+      "request": { "authorization": ["Bearer a", "Bearer b"] },
+      "center": { "notCalled": true },
+      "expect": { "outcome": "proceed", "identity": null, "centerCalls": 0 }
+    },
+    {
+      "name": "head-on-guarded-route-with-valid-token",
+      "why": "The positive half of the HEAD rule, and the one no other case can catch. `head-on-guarded-route-with-no-header` is satisfied by a client that simply answers 401 to every HEAD it ever sees — which would be a working conformance run and a broken service, because the operator's dashboard could then never issue a conditional read of a route it is fully entitled to. A HEAD carrying a token that satisfies the route's scope PROCEEDS, with the same identity a GET of that route would receive, and the center is called exactly once. Pinning only the refusal would have left \"401 everything\" green (meta#79 philosophy: a case an empty answer can satisfy is not a case).",
+      "route": { "method": "HEAD", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer operator.token.fifteen" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "proceed",
+        "identity": {
+          "sub": "user_31qP8k2cQeXampleOperator",
+          "kind": "operator",
+          "scopes": ["fleet:control"]
+        },
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "options-on-guarded-route-with-no-header",
+      "why": "OPTIONS is exempt from DEFAULT-DENY, not from a requirement the route DECLARED — the same distinction `head-on-guarded-route-with-no-header` draws, and the one a client is most likely to get wrong for OPTIONS specifically, because the CORS story makes \"let every OPTIONS through\" sound reasonable. It is not: an `app.all(path, handler)` route answers OPTIONS with the real handler, so a client that skipped the requirement for OPTIONS would run a mutation for an anonymous caller. Preflight keeps working because the CORS middleware is mounted in front of the guard and terminates the preflight itself; it does not work by the guard abdicating. 401, and the center is not asked.",
+      "route": { "method": "OPTIONS", "requires": "fleet:control" },
+      "request": { "authorization": null },
+      "center": { "notCalled": true },
+      "expect": {
+        "outcome": "reject",
+        "status": 401,
+        "message": "a bearer token is required",
+        "centerCalls": 0
+      }
+    },
+    {
+      "name": "lowercase-bearer-scheme",
+      "why": "RFC 7235 makes the auth-scheme token case-insensitive, and `active-with-scope-differing-only-in-case` claims in so many words that the scheme and the method are the two case-insensitive comparisons in this policy while scope matching is not. That claim is now pinned rather than merely asserted (meta#79): `bearer <token>` in lower case is a credential, is forwarded to the center, and proceeds. A client that compared the scheme with `==` against \"Bearer\" would read this as no credential and answer 401 to a caller holding a perfectly good session.",
+      "route": { "method": "GET", "requires": "session" },
+      "request": { "authorization": "bearer operator.token.sixteen" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "proceed",
+        "identity": {
+          "sub": "user_31qP8k2cQeXampleOperator",
+          "kind": "operator",
+          "scopes": ["fleet:control"]
+        },
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "lowercase-route-method",
+      "why": "The other half of the same claim, on the method. `route.method` is an HTTP method token and is compared CASE-INSENSITIVELY: a framework hands a client whatever it parsed, and a client that compared case-sensitively would read \"post\" as a method it did not recognise. Which way that fails depends on how the comparison is written — a `method === \"GET\"` safe-list makes \"post\" mutating by accident and happens to be right, but a `SAFE.has(method)` miss written the other way round, or a mutating-method allow-list, serves \"post\" as if it were safe and walks an undeclared mutation straight past default-deny. Lower-case \"post\" on a route declaring nothing is the same 500 as \"POST\", decided before the header is read — hence a valid token here and `centerCalls` 0.",
+      "route": { "method": "post", "requires": "none" },
+      "request": { "authorization": "Bearer operator.token.seventeen" },
+      "center": { "notCalled": true },
+      "expect": {
+        "outcome": "reject",
+        "status": 500,
+        "message": "this route declares no required scope",
+        "centerCalls": 0
+      }
+    }
+  ],
+  "$gatewayCasesComment": "st-gateway ONLY. A different policy, in its own group so nothing copies it by accident: the gateway does not authorize anything (that happened once already, in the calling service), it picks a queue lane. It therefore NEVER rejects and never answers 503 — a gateway that failed closed on the center would take the public read surface down with auth-service, which is exactly what the cases above are written to avoid. Anything other than an active `operator` is `background`, including a center that does not answer. `expect.lane` is the only verdict; a case that produces a status code fails. st-gateway consumes these through the same TS client package as fleet-service and automation-service, so both groups must be driven by its suite.",
+  "gatewayCases": [
+    {
+      "name": "gateway-no-header",
+      "why": "auth-service's own wipe poll and any anonymous visitor's live read. No credential, no call to the center, background lane. A gateway that called the center on every anonymous request would put auth-service on the hot path of the public map.",
+      "request": { "authorization": null },
+      "center": { "notCalled": true },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 0 }
+    },
+    {
+      "name": "gateway-non-bearer-scheme",
+      "why": "Not a bearer token, so nothing to introspect. Background, and the center is not asked — the same scheme check as every other client, and the only case here that must not produce a call.",
+      "request": { "authorization": "Basic b3BlcmF0b3I6aHVudGVyMg==" },
+      "center": { "notCalled": true },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 0 }
+    },
+    {
+      "name": "gateway-active-operator",
+      "why": "The only path to `interactive`. The dashboard's responsiveness is this case: a human session forwarded verbatim by agent/fleet/navigation-service. Note that the lane is decided by `kind`, not by the gateway inspecting `sub` — after decision 21 the center is the one place Clerk's sub conventions are known.",
+      "request": { "authorization": "Bearer operator.token.one" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": { "outcome": "lane", "lane": "interactive", "centerCalls": 1 }
+    },
+    {
+      "name": "gateway-active-operator-lacking-scope-key",
+      "why": "An active operator whose answer carries no `scope` key (RFC 7662 allows it; the center sent it until auth-service#4). The lane is decided by `kind`, so this is `interactive`. A gateway that read the missing key as an unreadable answer would drop every scopeless operator into `background`, quietly and with no error anywhere.",
+      "request": { "authorization": "Bearer guest.token.two" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleGuest\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": { "outcome": "lane", "lane": "interactive", "centerCalls": 1 }
+    },
+    {
+      "name": "gateway-active-machine",
+      "why": "automation-service's M2M token: a perfectly valid, fully scoped session that must still queue behind the browser. A client that maps any active token to `interactive` lets the autopilot outrank the operator watching it.",
+      "request": { "authorization": "Bearer machine.token.one" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"mch_31qP8k2cQeXampleMachine\",\"scope\":\"fleet:control agent:reset\",\"exp\":4102444800,\"kind\":\"machine\"}"
+      },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 1 }
+    },
+    {
+      "name": "gateway-kind-machine-with-user-subject",
+      "why": "Deliberately impossible in production — the center derives `kind` from the `sub` prefix, so the two can never disagree there — and the only case in this group that fails st-gateway's CURRENT deriver, which reads `sub.startsWith(\"user_\")` itself and would answer `interactive`. Every other gateway case agrees with itself and would pass unchanged, so without this one the migration is unverified. The lane follows `kind`; the gateway stops knowing Clerk's subject conventions (decision 21).",
+      "request": { "authorization": "Bearer disagreeing.token.one" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"machine\"}"
+      },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 1 }
+    },
+    {
+      "name": "gateway-kind-operator-with-machine-subject",
+      "why": "The mirror, and the one that fails safe in the wrong direction: a client still reading the subject answers `background` here, which looks correct and is not — it is the dashboard silently queueing behind the autopilot, the exact silent failure algorithms.md warns about. Also impossible in production, and also here only to pin that `kind` is the authority.",
+      "request": { "authorization": "Bearer disagreeing.token.two" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"mch_31qP8k2cQeXampleMachine\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": { "outcome": "lane", "lane": "interactive", "centerCalls": 1 }
+    },
+    {
+      "name": "gateway-inactive-token",
+      "why": "An expired or foreign-signed token. Background, NOT a 401 — the gateway is not the place a bad credential is refused, and the calling service in front of it has already refused it if the route was guarded.",
+      "request": { "authorization": "Bearer expired.token.one" },
+      "center": { "status": 200, "body": "{\"active\":false}" },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 1 }
+    },
+    {
+      "name": "gateway-center-unreachable",
+      "why": "The case that separates this group from every other. auth-service being down must not stop the gateway proxying: the fleet's own calls and the public read surface both keep working, in the background lane. If this case ever answers 503, an auth outage becomes a total outage.",
+      "request": { "authorization": "Bearer operator.token.one" },
+      "center": { "transport": "no-response" },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 1 }
+    },
+    {
+      "name": "gateway-center-rejects-our-caller-secret",
+      "why": "A misconfigured or rotated introspection secret. Still a lane decision, still background — the gateway degrades the operator's latency and nothing else. The calling services answer 503 for the same center response; the difference is deliberate and is why this group exists.",
+      "request": { "authorization": "Bearer operator.token.one" },
+      "center": { "status": 401, "body": "{\"error\":{\"message\":\"a valid introspection secret is required\"}}" },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 1 }
+    },
+    {
+      "name": "gateway-bearer-with-empty-token",
+      "why": "The gateway's half of the empty-token rule. \"Bearer \" carries nothing to introspect, so the lane is background and the center is not called — the gateway must not spend a round trip on a malformed header, which is the cheapest thing for an anonymous flood to send. It still never rejects: a malformed credential is a lane decision here, not a 401.",
+      "request": { "authorization": "Bearer " },
+      "center": { "notCalled": true },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 0 }
+    },
+    {
+      "name": "gateway-two-authorization-lines",
+      "why": "The gateway's half of the line-count rule. Two `Authorization` lines are no credential, so the lane is background and the center is not called. st-gateway runs on Node, whose HTTP parser keeps the first `authorization` line and discards the rest, so a gateway reading `req.headers.authorization` would introspect line one and could hand a caller the interactive lane on a credential the calling service never verified; only `req.rawHeaders` shows the count.",
+      "request": { "authorization": ["Bearer a", "Bearer b"] },
+      "center": { "notCalled": true },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 0 }
+    }
+  ]
+}

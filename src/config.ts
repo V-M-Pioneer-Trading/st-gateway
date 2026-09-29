@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { loadIntrospectionConfig } from "@v-m-pioneer-trading/introspection-client";
 
 export interface GatewayConfig {
   /** Listen port. Validated here rather than parsed inline at startup. */
@@ -16,13 +16,27 @@ export interface GatewayConfig {
   maxRetryDelayMs: number;
   /** auth-service base URL (decision 5) — GET /auth/v1/token is fetched from here. */
   authServiceUrl: string;
-  /** Shared secret presented as X-Auth-Service-Secret on every token fetch. */
+  /**
+   * The vault secret, presented as X-Auth-Service-Secret on every agent-token
+   * fetch. Not the introspection secret below: see
+   * requireAuthServiceSharedSecret for why the two differ.
+   */
   authServiceSharedSecret: string;
   /** How long a fetched agent token is served from cache before a normal (non-401-forced) refetch. */
   authServiceTokenCacheMs: number;
-  /** Clerk's RS256 public key (PEM/SPKI) — decision 2's priority derivation. */
-  clerkJwtKeyPem: string;
-  clerkIssuer: string | null;
+  /**
+   * Where auth-service answers "what does this token carry?" (decision 21),
+   * and the caller secret it expects. Used for one thing only: picking the
+   * queue lane (decision 2).
+   */
+  introspection: IntrospectionEndpoint;
+}
+
+export interface IntrospectionEndpoint {
+  /** The full endpoint URL, `/auth/v1/introspect` included. POSTed to verbatim. */
+  readonly url: string;
+  /** Sent as X-Introspection-Secret. */
+  readonly secret: string;
 }
 
 /** A silently-mangled number here turns into an every-request hang, so bad values must fail startup. */
@@ -53,10 +67,10 @@ const envInteger = (name: string, fallback: number, min: number): number => {
 /**
  * Everything except the two secrets below — those get their own require*()
  * functions, same split as fleet-service's config.ts, so tests (which
- * construct a literal GatewayConfig via createApp) never need real Clerk or
+ * construct a literal GatewayConfig via createApp) never need real
  * auth-service env vars just to exercise the numeric settings.
  */
-export const configFromEnv = (): Omit<GatewayConfig, "clerkJwtKeyPem" | "authServiceSharedSecret"> => ({
+export const configFromEnv = (): Omit<GatewayConfig, "introspection" | "authServiceSharedSecret"> => ({
   port: envInteger("PORT", 3002, 1),
   spaceTradersBaseUrl: process.env.SPACETRADERS_BASE_URL ?? "https://api.spacetraders.io/v2",
   rateLimitRps: envNumber("RATE_LIMIT_RPS", 2, 0.1),
@@ -66,34 +80,49 @@ export const configFromEnv = (): Omit<GatewayConfig, "clerkJwtKeyPem" | "authSer
   maxRetryDelayMs: envNumber("MAX_RETRY_DELAY_MS", 30_000, 1),
   authServiceUrl: process.env.AUTH_SERVICE_URL ?? "http://localhost:8082",
   authServiceTokenCacheMs: envNumber("AUTH_SERVICE_TOKEN_CACHE_MS", 30_000, 0),
-  clerkIssuer: process.env.CLERK_ISSUER ?? null,
 });
 
 /**
- * Clerk's public key comes either inline (CLERK_JWT_KEY, how production
- * passes it from SSM through the bootstrap script) or as a path
- * (CLERK_JWT_KEY_FILE, how compose mounts the local dev key). Neither has a
- * default — a service that can start without a trust anchor is one that can
- * be deployed with authentication silently off. See fleet-service/config.ts
- * for the identical pattern this was ported from.
+ * AUTH_INTROSPECTION_URL and AUTH_INTROSPECTION_SECRET, or a crash before the
+ * port is bound. Neither has a default.
+ *
+ * Failing closed here protects no request: the lane deriver never rejects,
+ * so a gateway with no center would still proxy every call — every one of
+ * them in the background lane, forever, with nothing in any log to say why
+ * the dashboard had become slow. A crash-loop that names the missing
+ * variable is diagnosed in one line; a quiet demotion of every operator is
+ * not diagnosed at all.
+ *
+ * Both are read straight from process.env by the shared client's own loader,
+ * which also refuses a URL that is not absolute http(s) or that carries a
+ * query string, and never puts the secret's value in an error message.
+ *
+ * The Clerk variables this service used to require (CLERK_JWT_KEY,
+ * CLERK_JWT_KEY_FILE, CLERK_ISSUER) are not read at all. The stack may still
+ * set them until meta#80 step 10 removes them, and a stale or garbage value
+ * must not stop the gateway starting: it no longer verifies anything, so it
+ * has no trust anchor to hold (decision 21).
  */
-export const requireClerkJwtKey = (): string => {
-  const inline = process.env.CLERK_JWT_KEY;
-  if (inline !== undefined && inline !== "") {
-    return inline.replace(/\\n/g, "\n");
-  }
-
-  const path = process.env.CLERK_JWT_KEY_FILE;
-  if (path !== undefined && path !== "") {
-    const pem = readFileSync(path, "utf8").trim();
-    if (pem === "") throw new Error(`CLERK_JWT_KEY_FILE (${path}) is empty`);
-    return pem;
-  }
-
-  throw new Error("CLERK_JWT_KEY or CLERK_JWT_KEY_FILE must be set");
+export const requireIntrospection = (): IntrospectionEndpoint => {
+  const { url, secret } = loadIntrospectionConfig(process.env);
+  return { url, secret };
 };
 
-/** Same "fail closed at startup" reasoning as requireClerkJwtKey. */
+/**
+ * AUTH_SERVICE_SHARED_SECRET, the vault secret: presented on GET
+ * /auth/v1/token to fetch the SpaceTraders agent token. Required, no
+ * default, for the same fail-closed reason as requireIntrospection.
+ *
+ * It is a different secret from AUTH_INTROSPECTION_SECRET, and the two must
+ * never hold the same value. The introspection secret is held by every
+ * service that asks auth-service about a token — fleet, automation,
+ * navigation, agent-service and this one — because an answer only describes
+ * a token the caller already holds. The vault secret is held by st-gateway
+ * alone, because it hands out the credential that spends the whole system's
+ * SpaceTraders account. If they were one value, any service able to
+ * introspect could also withdraw the agent token and call SpaceTraders
+ * around this gateway's rate budget.
+ */
 export const requireAuthServiceSharedSecret = (): string => {
   const secret = process.env.AUTH_SERVICE_SHARED_SECRET;
   if (secret === undefined || secret === "") {
@@ -101,3 +130,14 @@ export const requireAuthServiceSharedSecret = (): string => {
   }
   return secret;
 };
+
+/**
+ * The whole startup configuration, assembled exactly as the process does it
+ * before binding the port. Exported so the startup contract — which variables
+ * are required and which are ignored — is testable without spawning a process.
+ */
+export const gatewayConfigFromEnv = (): GatewayConfig => ({
+  ...configFromEnv(),
+  authServiceSharedSecret: requireAuthServiceSharedSecret(),
+  introspection: requireIntrospection(),
+});
