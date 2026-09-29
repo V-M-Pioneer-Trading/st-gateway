@@ -11,24 +11,29 @@ import { createApp } from "../server";
 import type { GatewayConfig } from "../config";
 import { FakeSpaceTraders } from "./fakeSpaceTraders";
 import { FakeAuthService, TEST_AUTH_SERVICE_SHARED_SECRET } from "./fakeAuthService";
-import { TEST_CLERK_JWT_KEY } from "./authTokens";
+import { FakeCenter, TEST_INTROSPECTION_SECRET } from "./fakeCenter";
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class Gateway {
   readonly spaceTraders = new FakeSpaceTraders();
   readonly authService = new FakeAuthService();
+  readonly center = new FakeCenter();
   private spaceTradersUrl = "";
   private authServiceUrl = "";
+  /** The full introspection endpoint URL the default app is configured with. */
+  centerUrl = "";
 
   async start() {
     this.spaceTradersUrl = await this.spaceTraders.start();
     this.authServiceUrl = await this.authService.start();
+    this.centerUrl = await this.center.start();
   }
 
   async stop() {
     await this.spaceTraders.stop();
     await this.authService.stop();
+    await this.center.stop();
   }
 
   app(overrides: Partial<GatewayConfig> = {}) {
@@ -44,8 +49,7 @@ class Gateway {
       authServiceUrl: this.authServiceUrl,
       authServiceSharedSecret: TEST_AUTH_SERVICE_SHARED_SECRET,
       authServiceTokenCacheMs: 30_000,
-      clerkJwtKeyPem: TEST_CLERK_JWT_KEY,
-      clerkIssuer: null,
+      introspection: { url: this.centerUrl, secret: TEST_INTROSPECTION_SECRET },
       ...overrides,
     });
   }
@@ -53,7 +57,7 @@ class Gateway {
 
 /**
  * Fresh fakes and a fresh app factory per test in the calling describe block.
- * Both request logs are assertion targets, so they must never carry over.
+ * All three request logs are assertion targets, so they must never carry over.
  */
 export const useHarness = () => {
   let current: Gateway;
@@ -70,6 +74,12 @@ export const useHarness = () => {
     },
     get authService() {
       return current.authService;
+    },
+    get center() {
+      return current.center;
+    },
+    get centerUrl() {
+      return current.centerUrl;
     },
     app: (overrides: Partial<GatewayConfig> = {}) => current.app(overrides),
   };
