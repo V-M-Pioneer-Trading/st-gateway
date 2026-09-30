@@ -250,8 +250,9 @@ account. One value for both would let any service that can introspect also
 fetch the agent token and call SpaceTraders around this gateway's rate budget.
 
 `CLERK_JWT_KEY`, `CLERK_JWT_KEY_FILE` and `CLERK_ISSUER` are **no longer
-read**. The stack may still set them until meta#80 step 10 removes them; their
-values, garbage included, change nothing.
+read**, and since meta#80 step 10 (infrastructure#92) no stack and no compose
+entry sets them for any service but auth-service; a stray value, garbage
+included, changes nothing.
 
 ## Running it
 
