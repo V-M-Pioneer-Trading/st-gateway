@@ -1,19 +1,19 @@
 introspection.json is vendored verbatim. It is not maintained here.
 
   original    V-M-Pioneer-Trading/meta, path fixtures/introspection.json
-  meta commit 46c033e3101dad46c0336e7d3cd74642a62248ab
-  blob        a6bc10071ed9704f66cd635da4b413b0a74d4978
-  vendored    2026-09-29
-  version     4
-  cases       40 calling-service + 12 gateway = 52
-  bytes       53749
-  sha256      5fe6d77e1113c05af899e554db0723a06cf42c197f9eb46a8b93b2f3c682201c
+  meta commit aa877e734f40078aca91b7f9b85e7502cd5916be
+  blob        279f08333a8151808f180ef411e124bb46ee8a97
+  vendored    2026-09-30
+  version     5
+  cases       41 calling-service + 13 gateway = 54
+  bytes       56516
+  sha256      ffbb7aa932d8d8523da125a0ff9a93f1fd771d5a32841d7e03ee25ec7b1315b7
 
-The commit above is on meta's main: the squash of V-M-Pioneer-Trading/meta#91
-("Two Authorization lines are never a credential: say why, and pin it
-(fixture v4)").
+The commit above is on meta's main: the squash of V-M-Pioneer-Trading/meta#94
+("Fixture v5: a duplicated key is a malformed answer
+(ts-introspection-client#6)").
 
-st-gateway drives the twelve gatewayCases only. The forty calling-service
+st-gateway drives the thirteen gatewayCases only. The forty-one calling-service
 cases describe a verdict (proceed, 401, 403, 503), and the gateway never
 reaches one: it picks a queue lane and nothing else. Those cases are driven by
 ts-introspection-client's own suite, which vendors the same version. The
