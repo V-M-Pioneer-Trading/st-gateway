@@ -9,9 +9,9 @@ import { TEST_INTROSPECTION_SECRET, unreachableCenterUrl } from "../testSupport/
 import { send, sendThrough } from "../testSupport/rawHttp";
 
 /**
- * meta's introspection fixture, version 4, against the real gateway.
+ * meta's introspection fixture, version 5, against the real gateway.
  *
- * Each of the twelve gateway cases goes through createApp over real HTTP:
+ * Each of the thirteen gateway cases goes through createApp over real HTTP:
  * the case's Authorization lines out of a real client, a real stub center
  * answering as the case says, and the fake SpaceTraders behind it. The lane
  * is read back from /metrics, which counts one dispatch per queue.
@@ -20,15 +20,15 @@ import { send, sendThrough } from "../testSupport/rawHttp";
  * produces a status code fails": every case must also come back with
  * SpaceTraders' own 200, relayed, because the gateway never rejects.
  *
- * The forty calling-service cases describe a verdict (proceed, 401, 403,
+ * The forty-one calling-service cases describe a verdict (proceed, 401, 403,
  * 503) that this gateway never reaches, so they are listed by name and
  * skipped. The list is exact: a case added upstream, in either group, fails
  * here until someone decides what it means for the gateway.
  */
 
 const FIXTURE_PATH = join(__dirname, "fixtures", "introspection.json");
-const FIXTURE_SHA256 = "5fe6d77e1113c05af899e554db0723a06cf42c197f9eb46a8b93b2f3c682201c";
-const FIXTURE_BYTES = 53749;
+const FIXTURE_SHA256 = "ffbb7aa932d8d8523da125a0ff9a93f1fd771d5a32841d7e03ee25ec7b1315b7";
+const FIXTURE_BYTES = 56516;
 
 const raw = readFileSync(FIXTURE_PATH);
 const fixture = JSON.parse(raw.toString("utf8")) as {
@@ -51,6 +51,7 @@ const GATEWAY_CASES = [
   "gateway-active-operator-lacking-scope-key",
   "gateway-bearer-with-empty-token",
   "gateway-center-rejects-our-caller-secret",
+  "gateway-center-returns-duplicate-key",
   "gateway-center-unreachable",
   "gateway-inactive-token",
   "gateway-kind-machine-with-user-subject",
@@ -73,6 +74,7 @@ const CALLING_SERVICE_CASES = [
   "bearer-with-internal-whitespace",
   "center-rejects-our-caller-secret",
   "center-returns-500",
+  "center-returns-duplicate-key",
   "center-returns-malformed-json",
   "center-times-out",
   "center-unreachable",
@@ -131,20 +133,20 @@ const assertKnownKeys = (c: GatewayCase) => {
   if (!shapeOk) throw new Error(`${c.name}: request.authorization has a shape the fixture does not define`);
 };
 
-describe("introspection fixture v4", () => {
+describe("introspection fixture v5", () => {
   it("is the vendored copy recorded in SOURCE.txt, byte for byte", () => {
     expect(raw.length).toBe(FIXTURE_BYTES);
     expect(createHash("sha256").update(raw).digest("hex")).toBe(FIXTURE_SHA256);
-    expect(fixture.version).toBe(4);
+    expect(fixture.version).toBe(5);
   });
 
-  it("holds exactly the twelve gateway cases driven below", () => {
+  it("holds exactly the thirteen gateway cases driven below", () => {
     expect(fixture.gatewayCases.map((c) => c.name).sort()).toEqual(GATEWAY_CASES);
   });
 
-  it("holds exactly the forty calling-service cases skipped below", () => {
-    expect(fixture.cases).toHaveLength(40);
-    expect(CALLING_SERVICE_CASES).toHaveLength(40);
+  it("holds exactly the forty-one calling-service cases skipped below", () => {
+    expect(fixture.cases).toHaveLength(41);
+    expect(CALLING_SERVICE_CASES).toHaveLength(41);
     expect(fixture.cases.map((c) => c.name).sort()).toEqual(CALLING_SERVICE_CASES);
   });
 
