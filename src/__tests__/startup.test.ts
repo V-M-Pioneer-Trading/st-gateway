@@ -71,9 +71,10 @@ describe("startup environment", () => {
     expect(() => gatewayConfigFromEnv()).toThrow(/AUTH_INTROSPECTION_URL/);
   });
 
-  // The stack keeps setting the Clerk variables until meta#80 step 10 removes
-  // them. The old gateway read all three and imported the key; this one must
-  // not so much as open the file, or a stale mount would take it down.
+  // Since meta#80 step 10 nothing sets the Clerk variables, but a stray value
+  // must still be ignored. The old gateway read all three and imported the
+  // key; this one must not so much as open the file, or a stale mount would
+  // take it down.
   it("starts and serves with garbage CLERK_* variables still in the environment", async () => {
     Object.assign(process.env, valid, {
       CLERK_JWT_KEY: "-----BEGIN PUBLIC KEY-----\nnot a key\n-----END PUBLIC KEY-----",
