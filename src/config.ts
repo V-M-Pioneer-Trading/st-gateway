@@ -98,10 +98,11 @@ export const configFromEnv = (): Omit<GatewayConfig, "introspection" | "authServ
  * query string, and never puts the secret's value in an error message.
  *
  * The Clerk variables this service used to require (CLERK_JWT_KEY,
- * CLERK_JWT_KEY_FILE, CLERK_ISSUER) are not read at all. The stack may still
- * set them until meta#80 step 10 removes them, and a stale or garbage value
- * must not stop the gateway starting: it no longer verifies anything, so it
- * has no trust anchor to hold (decision 21).
+ * CLERK_JWT_KEY_FILE, CLERK_ISSUER) are neither read nor set anywhere since
+ * meta#80 step 10 (infrastructure#92): no stack and no compose entry sets
+ * them for any service but auth-service. A stray value is ignored and must
+ * not stop the gateway starting: it no longer verifies anything, so it has
+ * no trust anchor to hold (decision 21).
  */
 export const requireIntrospection = (): IntrospectionEndpoint => {
   const { url, secret } = loadIntrospectionConfig(process.env);
