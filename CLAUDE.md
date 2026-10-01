@@ -48,7 +48,7 @@ file list *from the Dockerfile's own COPY lines*; copying what the build
 - The lane comes **only** from the shared client's `createLaneDeriver`. Nothing
   in this repo parses a token, decodes one, or looks at `sub`: after decision
   21 auth-service is the one place Clerk's conventions are known. The
-  `@v-m-pioneer-trading/introspection-client` import is confined to
+  `@v-m-pioneer-trading/clerk-client` import is confined to
   `server.ts` (the deriver) and `config.ts` (the env loader).
 - `server.ts` is the only module that knows Express exists. Nothing else may
   import `express` or touch `req`/`res`.

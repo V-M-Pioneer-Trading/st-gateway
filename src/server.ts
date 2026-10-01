@@ -31,7 +31,7 @@ import {
   soleAuthorizationLine,
   type Introspector,
   type Lane,
-} from "@v-m-pioneer-trading/introspection-client";
+} from "@v-m-pioneer-trading/clerk-client";
 import { GatewayConfig, gatewayConfigFromEnv } from "./config";
 import { TokenBucket, type Priority } from "./tokenBucket";
 import { createAuthTokenClient, type TokenFailure } from "./authServiceClient";

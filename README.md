@@ -148,7 +148,7 @@ waits in is **derived, never declared** (auth-design.md decision 2):
 
 Since meta#80 step 9 the gateway does not verify tokens itself. It asks
 auth-service, the one component that does (decision 21), through the shared
-[introspection client](https://github.com/V-M-Pioneer-Trading/ts-introspection-client)'s
+[clerk client](https://github.com/V-M-Pioneer-Trading/clerk-client)'s
 lane deriver:
 
 | The caller's `Authorization` | Center called | Lane |
