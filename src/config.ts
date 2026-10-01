@@ -1,4 +1,4 @@
-import { loadIntrospectionConfig } from "@v-m-pioneer-trading/introspection-client";
+import { loadIntrospectionConfig } from "@v-m-pioneer-trading/clerk-client";
 
 export interface GatewayConfig {
   /** Listen port. Validated here rather than parsed inline at startup. */

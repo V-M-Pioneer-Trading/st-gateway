@@ -14,7 +14,7 @@
     "test": "jest"
   },
   "dependencies": {
-    "@v-m-pioneer-trading/introspection-client": "https://github.com/V-M-Pioneer-Trading/ts-introspection-client/releases/download/v1.1.3/v-m-pioneer-trading-introspection-client-1.1.3.tgz",
+    "@v-m-pioneer-trading/clerk-client": "https://github.com/V-M-Pioneer-Trading/clerk-client/releases/download/v2.0.0/v-m-pioneer-trading-clerk-client-2.0.0.tgz",
     "express": "^4.21.2"
   },
   "devDependencies": {
