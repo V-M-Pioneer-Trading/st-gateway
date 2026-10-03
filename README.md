@@ -178,7 +178,7 @@ more than **250 ms** — well above a healthy round trip on the same host, and a
 quarter of what a client that *rejects* would allow itself, because a lane is a
 guess the gateway is willing to make without an answer. It asks at most once
 per inbound request, before the retry loop, and never for `/health` or
-`/metrics`. The fixture's thirteen gateway cases pin all of this
+`/metrics`. The fixture's fourteen gateway cases pin all of this
 (`src/__tests__/lane.conformance.test.ts`).
 
 In practice agent, fleet and navigation-service forward the dashboard's human
