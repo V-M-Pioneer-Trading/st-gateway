@@ -27,8 +27,8 @@ import { send, sendThrough } from "../testSupport/rawHttp";
  */
 
 const FIXTURE_PATH = join(__dirname, "fixtures", "introspection.json");
-const FIXTURE_SHA256 = "3918d6790d583f0346498a1f61482d0bb846f46a24706d4e9e09181eac5f62c0";
-const FIXTURE_BYTES = 69322;
+const FIXTURE_SHA256 = "90562110d24e47bfdcbf7ff05f1112b4bc840835bf728fa7f6bd81ff67bbeb9c";
+const FIXTURE_BYTES = 69309;
 
 const raw = readFileSync(FIXTURE_PATH);
 const fixture = JSON.parse(raw.toString("utf8")) as {
@@ -62,7 +62,7 @@ const GATEWAY_CASES = [
   "gateway-two-authorization-lines",
 ];
 
-/** Driven by ts-introspection-client's own suite; a verdict the gateway never gives. */
+/** Driven by clerk-client's own suite; a verdict the gateway never gives. */
 const CALLING_SERVICE_CASES = [
   "active-machine-kind",
   "active-with-irregular-scope-whitespace",

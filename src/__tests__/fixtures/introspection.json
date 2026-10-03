@@ -291,7 +291,7 @@
       "name": "scope-joined-by-several-spaces",
       "why": "Version 6. Leading, repeated and trailing SPACES only: a run is one separator and the empties are discarded. A client splitting on a single space literal and keeping the pieces fails the identity assertion even though the authorization check would pass.",
       "route": { "method": "POST", "requires": "agent:reset" },
-      "request": { "authorization": "Bearer operator.token.thirteen" },
+      "request": { "authorization": "Bearer spacing.token.one" },
       "center": {
         "status": 200,
         "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"   fleet:control    agent:reset   \",\"exp\":4102444800,\"kind\":\"operator\"}"
@@ -310,7 +310,7 @@
       "name": "scope-joined-by-tab",
       "why": "Version 6. A TAB alone separates two scopes: it is one of the four separators (space, tab, CR, LF). The required scope is the second piece, and the identity is asserted, so a client that dropped tab from its separators — reading RFC 6749 §3.3's SP-only grammar literally — fails here.",
       "route": { "method": "POST", "requires": "agent:reset" },
-      "request": { "authorization": "Bearer operator.token.fourteen" },
+      "request": { "authorization": "Bearer spacing.token.two" },
       "center": {
         "status": 200,
         "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\\tagent:reset\",\"exp\":4102444800,\"kind\":\"operator\"}"
@@ -329,7 +329,7 @@
       "name": "scope-joined-by-no-break-space",
       "why": "Version 6. Only space, tab, CR and LF separate scopes. Here `fleet:control` is joined to the next scope by NO-BREAK SPACE U+00A0, so the token carries ONE scope, `fleet:control\\u00a0agent:reset`, and not `fleet:control`. A client splitting on `/\\s+/` — JavaScript's `\\s` includes U+00A0 — finds `fleet:control` and proceeds; clerk-client did until 2.0.1. 403 with the generic sentence.",
       "route": { "method": "POST", "requires": "fleet:control" },
-      "request": { "authorization": "Bearer operator.token.fifteen" },
+      "request": { "authorization": "Bearer spacing.token.three" },
       "center": {
         "status": 200,
         "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\\u00a0agent:reset\",\"exp\":4102444800,\"kind\":\"operator\"}"
@@ -346,7 +346,7 @@
       "name": "scope-joined-by-em-space",
       "why": "Version 6. The same rule with EM SPACE U+2003, a Unicode space separator (category Zs) that `/\\s+/` and Go's `strings.Fields` both treat as whitespace. The required scope is the SECOND piece, so a client that only mis-splits at the front of the string is caught too. One opaque scope; 403.",
       "route": { "method": "POST", "requires": "agent:reset" },
-      "request": { "authorization": "Bearer operator.token.sixteen" },
+      "request": { "authorization": "Bearer spacing.token.four" },
       "center": {
         "status": 200,
         "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\\u2003agent:reset\",\"exp\":4102444800,\"kind\":\"operator\"}"
@@ -363,7 +363,7 @@
       "name": "scope-joined-by-vertical-tab",
       "why": "Version 6. VERTICAL TAB U+000B is ASCII whitespace to `/\\s+/`, to Java's `\\s`, to C's `isspace` and to Go's `strings.Fields`, but it is not one of the four separators: one opaque scope, 403. Pins the ASCII edge of the rule, where `\\s` in most regex dialects and the rule part company.",
       "route": { "method": "POST", "requires": "fleet:control" },
-      "request": { "authorization": "Bearer operator.token.seventeen" },
+      "request": { "authorization": "Bearer spacing.token.five" },
       "center": {
         "status": 200,
         "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\\u000bagent:reset\",\"exp\":4102444800,\"kind\":\"operator\"}"
@@ -380,7 +380,7 @@
       "name": "scope-joined-by-form-feed",
       "why": "Version 6. FORM FEED U+000C, the other ASCII whitespace character that `\\s` matches and the rule does not separate on. One opaque scope; 403, with the required scope second.",
       "route": { "method": "POST", "requires": "agent:reset" },
-      "request": { "authorization": "Bearer operator.token.eighteen" },
+      "request": { "authorization": "Bearer spacing.token.six" },
       "center": {
         "status": 200,
         "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\\fagent:reset\",\"exp\":4102444800,\"kind\":\"operator\"}"
@@ -397,7 +397,7 @@
       "name": "active-with-non-separators-in-scope",
       "why": "Version 6, asserted through the identity rather than a 403, so a client cannot pass by refusing the token for some other reason. Eleven pieces joined by VT, FF, NEXT LINE U+0085, NO-BREAK SPACE U+00A0, EN QUAD U+2000, HAIR SPACE U+200A, EM SPACE U+2003, LINE SEPARATOR U+2028, IDEOGRAPHIC SPACE U+3000 and ZERO WIDTH NO-BREAK SPACE U+FEFF are ONE scope, kept byte for byte; a CR LF then separates `agent:reset`, which the route requires and finds. Every joining character is whitespace to at least one splitter the fleet has used.",
       "route": { "method": "POST", "requires": "agent:reset" },
-      "request": { "authorization": "Bearer operator.token.nineteen" },
+      "request": { "authorization": "Bearer spacing.token.seven" },
       "center": {
         "status": 200,
         "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\\u000bx1\\u000cx2\\u0085x3\\u00a0x4\\u2000x5\\u200ax6\\u2003x7\\u2028x8\\u3000x9\\ufeffx10\\r\\nagent:reset\",\"exp\":4102444800,\"kind\":\"operator\"}"
@@ -407,7 +407,7 @@
         "identity": {
           "sub": "user_31qP8k2cQeXampleOperator",
           "kind": "operator",
-          "scopes": ["fleet:control\u000bx1\u000cx2\u0085x3 x4 x5 x6 x7 x8　x9﻿x10", "agent:reset"]
+          "scopes": ["fleet:control\u000bx1\u000cx2\u0085x3\u00a0x4\u2000x5\u200ax6\u2003x7\u2028x8\u3000x9\ufeffx10", "agent:reset"]
         },
         "centerCalls": 1
       }

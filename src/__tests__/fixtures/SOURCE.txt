@@ -1,13 +1,13 @@
 introspection.json is vendored verbatim. It is not maintained here.
 
   original    V-M-Pioneer-Trading/meta, path fixtures/introspection.json
-  meta commit 3cff53921b1e691997ef0c94b4d1945df17efa90
-  blob        cb5a8973a3d59f81ac5399b0dea5c7dc28d52b29
+  meta commit 993fea9eb1c38de03b9bea14d6e03d8b450750cc
+  blob        ed0f25acfd3a9aaed7a5674a969cac0b25e7cf80
   vendored    2026-10-03
   version     6
   cases       51 calling-service + 14 gateway = 65
-  bytes       69322
-  sha256      3918d6790d583f0346498a1f61482d0bb846f46a24706d4e9e09181eac5f62c0
+  bytes       69309
+  sha256      90562110d24e47bfdcbf7ff05f1112b4bc840835bf728fa7f6bd81ff67bbeb9c
 
 The commit above is the head of meta pull request #107, "Fixture v6: what
 separates scopes, and top-level keys ignoring case". That pull request is
