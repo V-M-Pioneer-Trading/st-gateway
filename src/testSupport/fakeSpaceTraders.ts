@@ -7,7 +7,7 @@
  */
 
 import http from "http";
-import { AddressInfo } from "net";
+import type { AddressInfo } from "net";
 
 export interface RecordedRequest {
   method: string;
@@ -38,7 +38,7 @@ export class FakeSpaceTraders {
   constructor() {
     this.server = http.createServer((req, res) => {
       let body = "";
-      req.on("data", (c) => (body += c));
+      req.on("data", (c) => (body += String(c)));
       req.on("end", () => {
         this.requests.push({
           method: req.method ?? "",
@@ -47,8 +47,8 @@ export class FakeSpaceTraders {
           body,
           receivedAt: Date.now(),
         });
-        const next = this.responses.length > 1 ? this.responses.shift()! : this.responses[0];
-        setTimeout(() => this.reply(res, next), this.delayMs);
+        const next = this.responses.length > 1 ? (this.responses.shift() ?? this.responses[0]) : this.responses[0];
+        setTimeout(() => { this.reply(res, next); }, this.delayMs);
       });
     });
   }
@@ -56,7 +56,7 @@ export class FakeSpaceTraders {
   private reply(res: http.ServerResponse, next: FakeResponse) {
     if (next.truncated) {
       res.socket?.write(
-        `HTTP/1.1 ${next.status} OK\r\nContent-Type: application/json\r\nContent-Length: ${next.body.length + 64}\r\n\r\n${next.body}`,
+        `HTTP/1.1 ${String(next.status)} OK\r\nContent-Type: application/json\r\nContent-Length: ${String(next.body.length + 64)}\r\n\r\n${next.body}`,
       );
       res.socket?.destroy();
       return;
@@ -78,10 +78,13 @@ export class FakeSpaceTraders {
   async start(): Promise<string> {
     await new Promise<void>((resolve) => this.server.listen(0, resolve));
     const { port } = this.server.address() as AddressInfo;
-    return `http://127.0.0.1:${port}`;
+    return `http://127.0.0.1:${String(port)}`;
   }
 
   async stop() {
-    await new Promise<void>((resolve, reject) => this.server.close((err) => (err ? reject(err) : resolve())));
+    await new Promise<void>((resolve, reject) => this.server.close((err) => {
+        if (err) reject(err);
+        else resolve();
+      }));
   }
 }

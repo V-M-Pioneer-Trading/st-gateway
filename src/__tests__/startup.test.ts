@@ -19,7 +19,7 @@ describe("startup environment", () => {
   beforeEach(() => {
     process.env = { ...saved };
     for (const name of [...Object.keys(valid), "CLERK_JWT_KEY", "CLERK_JWT_KEY_FILE", "CLERK_ISSUER"]) {
-      delete process.env[name];
+      Reflect.deleteProperty(process.env, name);
     }
   });
 
@@ -44,7 +44,7 @@ describe("startup environment", () => {
     (name) => {
       Object.assign(process.env, valid);
 
-      delete process.env[name];
+      Reflect.deleteProperty(process.env, name);
       expect(() => gatewayConfigFromEnv()).toThrow(name);
 
       process.env[name] = "";

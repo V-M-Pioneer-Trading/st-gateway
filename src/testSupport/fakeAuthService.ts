@@ -10,7 +10,7 @@
  */
 
 import http from "http";
-import { AddressInfo } from "net";
+import type { AddressInfo } from "net";
 
 export interface FakeAuthResponse {
   status: number;
@@ -26,7 +26,7 @@ export class FakeAuthService {
   constructor() {
     this.server = http.createServer((req, res) => {
       this.requests.push({ url: req.url ?? "", secret: req.headers["x-auth-service-secret"] as string | undefined });
-      const next = this.responses.length > 1 ? this.responses.shift()! : this.responses[0];
+      const next = this.responses.length > 1 ? (this.responses.shift() ?? this.responses[0]) : this.responses[0];
       setTimeout(() => {
         res.writeHead(next.status, { "Content-Type": "application/json" });
         res.end(JSON.stringify(next.body));
@@ -47,11 +47,14 @@ export class FakeAuthService {
   async start(): Promise<string> {
     await new Promise<void>((resolve) => this.server.listen(0, resolve));
     const { port } = this.server.address() as AddressInfo;
-    return `http://127.0.0.1:${port}`;
+    return `http://127.0.0.1:${String(port)}`;
   }
 
   async stop() {
-    await new Promise<void>((resolve, reject) => this.server.close((err) => (err ? reject(err) : resolve())));
+    await new Promise<void>((resolve, reject) => this.server.close((err) => {
+        if (err) reject(err);
+        else resolve();
+      }));
   }
 }
 

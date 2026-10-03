@@ -45,7 +45,7 @@ const envNumber = (name: string, fallback: number, min: number): number => {
   if (raw === undefined || raw === "") return fallback;
   const value = Number(raw);
   if (!Number.isFinite(value) || value < min) {
-    throw new Error(`${name} must be a number >= ${min}, got "${raw}"`);
+    throw new Error(`${name} must be a number >= ${String(min)}, got "${raw}"`);
   }
   return value;
 };
@@ -59,7 +59,7 @@ const envNumber = (name: string, fallback: number, min: number): number => {
 const envInteger = (name: string, fallback: number, min: number): number => {
   const value = envNumber(name, fallback, min);
   if (!Number.isInteger(value)) {
-    throw new Error(`${name} must be a whole number >= ${min}, got "${process.env[name]}"`);
+    throw new Error(`${name} must be a whole number >= ${String(min)}, got "${String(process.env[name])}"`);
   }
   return value;
 };
