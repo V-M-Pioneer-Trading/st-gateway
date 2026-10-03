@@ -1,8 +1,10 @@
 import http from "http";
-import { AddressInfo } from "net";
+import type { AddressInfo } from "net";
 import request from "supertest";
 import { configFromEnv } from "../config";
 import { useHarness, sleep } from "../testSupport/gatewayHarness";
+
+interface ErrorBody { error: { message?: string } }
 
 describe("st-gateway proxy", () => {
   const gw = useHarness();
@@ -95,7 +97,7 @@ describe("st-gateway proxy", () => {
       .set("Authorization", "Bearer test-token");
 
     expect(res.status).toBe(502);
-    expect(res.body.error).toBeDefined();
+    expect((res.body as ErrorBody).error).toBeDefined();
   });
 
   it("enforces the global rate budget across concurrent callers", async () => {
@@ -166,7 +168,7 @@ describe("st-gateway proxy", () => {
       .send(Buffer.alloc(6 * 1024 * 1024));
 
     expect(res.status).toBe(413);
-    expect(res.body.error.message).toBeDefined();
+    expect((res.body as ErrorBody).error.message).toBeDefined();
     expect(gw.spaceTraders.requests).toHaveLength(0);
   });
 
@@ -183,7 +185,7 @@ describe("st-gateway proxy", () => {
     const res = await request(gw.app({ maxRetries: 0 })).get("/proxy/my/agent").set("Authorization", "Bearer t");
 
     expect(res.status).toBe(502);
-    expect(res.body.error.message).toBeDefined();
+    expect((res.body as ErrorBody).error.message).toBeDefined();
   }, 10_000);
 
   // REGRESSION (bug: the disconnect check ran only *before* the queue wait).
@@ -203,14 +205,14 @@ describe("st-gateway proxy", () => {
       expect(gw.spaceTraders.requests).toHaveLength(1);
 
       const abandoned = http.get({ port, path: "/proxy/my/ships" });
-      abandoned.on("error", () => {}); // destroying it below is the point, not a failure
+      abandoned.on("error", () => undefined); // destroying it below is the point, not a failure
       await sleep(100); // queued behind the spent token
       abandoned.destroy();
 
       await sleep(1500); // well past when a token frees up for it
       expect(gw.spaceTraders.requests).toHaveLength(1);
     } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await new Promise<void>((resolve) => server.close(() => { resolve(); }));
     }
   }, 10_000);
 

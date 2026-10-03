@@ -1,5 +1,5 @@
 import net from "net";
-import { AddressInfo } from "net";
+import type { AddressInfo } from "net";
 import request from "supertest";
 import { useHarness, sleep } from "../testSupport/gatewayHarness";
 import { CENTER_WARNING_INTERVAL_MS, LANE_TIMEOUT_MS } from "../server";
@@ -12,6 +12,8 @@ import {
 } from "../testSupport/fakeCenter";
 import { TEST_AUTH_SERVICE_SHARED_SECRET } from "../testSupport/fakeAuthService";
 import { sendThrough } from "../testSupport/rawHttp";
+
+interface Metrics { queues: Record<"interactive" | "background", { latencyMs: { count: number; avg: number; max: number } }> }
 
 /**
  * The queue lane (auth-design.md decisions 2 and 21) at the HTTP boundary.
@@ -38,8 +40,8 @@ describe("st-gateway queue lanes", () => {
   const lanes = async (gateway: ReturnType<typeof app>) => {
     const metrics = await request(gateway).get("/metrics");
     return {
-      interactive: metrics.body.queues.interactive.latencyMs.count as number,
-      background: metrics.body.queues.background.latencyMs.count as number,
+      interactive: (metrics.body as Metrics).queues.interactive.latencyMs.count,
+      background: (metrics.body as Metrics).queues.background.latencyMs.count,
     };
   };
 
@@ -47,7 +49,7 @@ describe("st-gateway queue lanes", () => {
     const gateway = app();
 
     const background = Array.from({ length: 4 }, (_, i) =>
-      request(gateway).get(`/proxy/my/agent?bg=${i}`).set("Authorization", MACHINE_BEARER),
+      request(gateway).get(`/proxy/my/agent?bg=${String(i)}`).set("Authorization", MACHINE_BEARER),
     );
 
     await sleep(30); // let the background requests reach the gateway and queue
@@ -68,7 +70,7 @@ describe("st-gateway queue lanes", () => {
     const gateway = app();
 
     const background = Array.from({ length: 3 }, (_, i) =>
-      request(gateway).get(`/proxy/my/agent?bg=${i}`).set("Authorization", unknown),
+      request(gateway).get(`/proxy/my/agent?bg=${String(i)}`).set("Authorization", unknown),
     );
     await sleep(30);
     const unmarked = request(gateway).get("/proxy/my/agent?unmarked=1").set("Authorization", unknown);
@@ -86,7 +88,7 @@ describe("st-gateway queue lanes", () => {
     const gateway = app();
 
     const background = Array.from({ length: 3 }, (_, i) =>
-      request(gateway).get(`/proxy/my/agent?bg=${i}`).set("Authorization", unknown),
+      request(gateway).get(`/proxy/my/agent?bg=${String(i)}`).set("Authorization", unknown),
     );
     await sleep(30);
     const spoofed = request(gateway)
@@ -230,10 +232,10 @@ describe("st-gateway queue lanes", () => {
   it("makes no center call when a second Authorization line hides past the header-count cap", async () => {
     const gateway = app();
     const server = gateway.listen(0, "127.0.0.1");
-    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    await new Promise<void>((resolve) => server.once("listening", () => { resolve(); }));
     const { port } = server.address() as AddressInfo;
 
-    const fillers = Array.from({ length: 1100 }, (_, i) => `x-filler-${i}: 1\r\n`).join("");
+    const fillers = Array.from({ length: 1100 }, (_, i) => `x-filler-${String(i)}: 1\r\n`).join("");
     const raw =
       "GET /proxy/my/agent HTTP/1.1\r\nHost: 127.0.0.1\r\n" +
       `Authorization: ${OPERATOR_BEARER}\r\n` +
@@ -247,14 +249,14 @@ describe("st-gateway queue lanes", () => {
         const socket = net.connect(port, "127.0.0.1", () => socket.write(raw));
         let data = "";
         socket.setEncoding("utf8");
-        socket.on("data", (chunk) => (data += chunk));
-        socket.on("end", () => resolve(data));
+        socket.on("data", (chunk) => (data += String(chunk)));
+        socket.on("end", () => { resolve(data); });
         socket.on("error", reject);
       });
       status = Number(/^HTTP\/1\.1 (\d{3})/.exec(reply)?.[1] ?? 0);
     } finally {
       server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await new Promise<void>((resolve) => server.close(() => { resolve(); }));
     }
 
     expect([200, 431]).toContain(status);
@@ -282,11 +284,11 @@ describe("st-gateway queue lanes", () => {
   // demotes every operator to background and fails nothing, so without a log
   // line nobody would ever know.
   describe("when the center cannot be used", () => {
-    let warn: jest.SpyInstance;
+    let warn: jest.SpyInstance<void, unknown[]>;
     beforeEach(() => {
-      warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+      warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     });
-    afterEach(() => warn.mockRestore());
+    afterEach(() => { warn.mockRestore(); });
 
     const centerWarnings = () =>
       warn.mock.calls.map((args) => String(args[0])).filter((line) => line.includes("introspection"));
@@ -339,7 +341,8 @@ describe("st-gateway queue lanes", () => {
       request(gateway).get("/proxy/my/agent?a=3").set("Authorization", unknown),
     ]);
 
-    const after = await request(gateway).get("/metrics");
+    const afterRes = await request(gateway).get("/metrics");
+    const after = { body: afterRes.body as Metrics };
     expect(after.body.queues.interactive.latencyMs.count).toBe(1);
     expect(after.body.queues.background.latencyMs.count).toBe(2);
     expect(after.body.queues.interactive.latencyMs.avg).toBeGreaterThanOrEqual(0);

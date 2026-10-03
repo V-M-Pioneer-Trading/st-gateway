@@ -82,7 +82,7 @@ export function createAuthTokenClient(config: AuthTokenClientConfig): AuthTokenC
       // whoever is paged to the one system that is fine.
       return res.status === 503
         ? fail("unconfigured", "HTTP 503 (auth-service reports no agent token)")
-        : fail("unavailable", `HTTP ${res.status}`);
+        : fail("unavailable", `HTTP ${String(res.status)}`);
     }
 
     let body: TokenResponse;

@@ -32,7 +32,8 @@ import {
   type Introspector,
   type Lane,
 } from "@v-m-pioneer-trading/clerk-client";
-import { GatewayConfig, gatewayConfigFromEnv } from "./config";
+import type { GatewayConfig } from "./config";
+import { gatewayConfigFromEnv } from "./config";
 import { TokenBucket, type Priority } from "./tokenBucket";
 import { createAuthTokenClient, type TokenFailure } from "./authServiceClient";
 
@@ -86,7 +87,7 @@ function reportingUnavailable(inner: Introspector, url: string, warn: (line: str
       if (answer.state === "unavailable") {
         const now = Date.now();
         if (now - lastWarnedAt >= CENTER_WARNING_INTERVAL_MS) {
-          const more = suppressed > 0 ? ` (${suppressed} more since the last warning)` : "";
+          const more = suppressed > 0 ? ` (${String(suppressed)} more since the last warning)` : "";
           warn(
             `st-gateway: auth-service introspection at ${where} is unavailable — unreachable, slow, non-2xx, ` +
               `unreadable, or refusing AUTH_INTROSPECTION_SECRET; operators are queued as background${more}`,
@@ -180,7 +181,7 @@ export function createApp(config: GatewayConfig) {
         timeoutMs: LANE_TIMEOUT_MS,
       }),
       config.introspection.url,
-      (line) => console.warn(line),
+      (line) => { console.warn(line); },
     ),
   );
 
@@ -252,7 +253,7 @@ export function createApp(config: GatewayConfig) {
         upstream = await fetch(url, {
           method: req.method,
           headers,
-          body: hasBody ? req.body : undefined,
+          body: hasBody ? (req.body as BodyInit) : undefined,
         });
       } catch (err) {
         lastError = err;
@@ -282,6 +283,7 @@ export function createApp(config: GatewayConfig) {
         if (authorization !== null && authorization !== headers.Authorization) {
           headers.Authorization = authorization;
           // Release the pooled connection before abandoning this response.
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- isAuthFailure is only true when upstream !== null (checked above); TypeScript cannot narrow a `let` through the aliased condition
           await upstream!.body?.cancel();
           continue; // immediately: a stale credential needs a token, not a delay
         }
@@ -312,6 +314,7 @@ export function createApp(config: GatewayConfig) {
   }
 
   // Raw body: the gateway forwards payloads verbatim and never parses them.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Express 4 ignores the returned promise; the handler catches every rejection itself (see the catch below)
   app.use("/proxy", express.raw({ type: "*/*", limit: "5mb" }), async (req, res) => {
     try {
       await proxy(req, res);
@@ -331,6 +334,7 @@ export function createApp(config: GatewayConfig) {
 
   // Keep parser failures (payload too large, aborted stream) in the same JSON
   // error envelope as everything else instead of Express's default HTML page.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Express recognises an error handler by its four-parameter arity, so `_next` must stay declared
   app.use((err: Error & { status?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(typeof err.status === "number" ? err.status : 500).json({
       error: { message: err.message || "internal error" },
@@ -347,6 +351,6 @@ if (require.main === module) {
   // environment are ignored.
   const config: GatewayConfig = gatewayConfigFromEnv();
   createApp(config).listen(config.port, () => {
-    console.log(`st-gateway listening on http://localhost:${config.port}`);
+    console.log(`st-gateway listening on http://localhost:${String(config.port)}`);
   });
 }

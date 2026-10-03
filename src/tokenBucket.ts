@@ -34,7 +34,7 @@ export class TokenBucket {
 
   constructor(private rps: number, private burst: number) {
     if (!Number.isFinite(rps) || rps <= 0 || !Number.isFinite(burst) || burst < 1) {
-      throw new Error(`TokenBucket requires rps > 0 and burst >= 1, got rps=${rps} burst=${burst}`);
+      throw new Error(`TokenBucket requires rps > 0 and burst >= 1, got rps=${String(rps)} burst=${String(burst)}`);
     }
     this.tokens = burst;
     this.lastRefill = Date.now();
@@ -93,7 +93,7 @@ export class TokenBucket {
         this.timer = null;
         this.drain();
       }, msUntilNextToken);
-      this.timer.unref?.();
+      this.timer.unref();
     }
   }
 }

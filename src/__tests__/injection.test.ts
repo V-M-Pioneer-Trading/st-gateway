@@ -1,6 +1,8 @@
 import request from "supertest";
 import { useHarness } from "../testSupport/gatewayHarness";
 
+interface ErrorBody { error: { message?: string } }
+
 describe("st-gateway credential injection (auth-design.md decision 5)", () => {
   const gw = useHarness();
 
@@ -224,7 +226,7 @@ describe("st-gateway credential injection (auth-design.md decision 5)", () => {
 
     await Promise.all(
       Array.from({ length: 5 }, (_, i) =>
-        request(gateway).get(`/proxy/my/ships?n=${i}`).set("Authorization", "Bearer x"),
+        request(gateway).get(`/proxy/my/ships?n=${String(i)}`).set("Authorization", "Bearer x"),
       ),
     );
 
@@ -244,8 +246,8 @@ describe("st-gateway credential injection (auth-design.md decision 5)", () => {
     const res = await request(gw.app()).get("/proxy/my/ships").set("Authorization", "Bearer x");
 
     expect(res.status).toBe(503);
-    expect(res.body.error.message).toMatch(/auth-service/i);
-    expect(res.body.error.message).not.toMatch(/not configured/i);
+    expect((res.body as ErrorBody).error.message).toMatch(/auth-service/i);
+    expect((res.body as ErrorBody).error.message).not.toMatch(/not configured/i);
     expect(gw.spaceTraders.requests).toHaveLength(0);
   });
 
@@ -265,9 +267,9 @@ describe("st-gateway credential injection (auth-design.md decision 5)", () => {
 
     expect(unconfiguredRes.status).toBe(503);
     expect(unreachableRes.status).toBe(503);
-    expect(unconfiguredRes.body.error.message).toMatch(/not configured/i);
-    expect(unreachableRes.body.error.message).toMatch(/auth-service/i);
-    expect(unreachableRes.body.error.message).not.toEqual(unconfiguredRes.body.error.message);
+    expect((unconfiguredRes.body as ErrorBody).error.message).toMatch(/not configured/i);
+    expect((unreachableRes.body as ErrorBody).error.message).toMatch(/auth-service/i);
+    expect((unreachableRes.body as ErrorBody).error.message).not.toEqual((unconfiguredRes.body as ErrorBody).error.message);
     expect(gw.spaceTraders.requests).toHaveLength(0);
   });
 });

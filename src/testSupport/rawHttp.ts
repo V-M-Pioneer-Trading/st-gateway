@@ -9,7 +9,7 @@
  */
 
 import http from "http";
-import { AddressInfo } from "net";
+import type { AddressInfo } from "net";
 import type { Express } from "express";
 
 export interface RawResponse {
@@ -27,13 +27,13 @@ export async function sendThrough(
   { method = "GET", path, authorization }: { method?: string; path: string; authorization: string | string[] | null },
 ): Promise<RawResponse> {
   const server = app.listen(0, "127.0.0.1");
-  await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+  await new Promise<void>((resolve) => server.once("listening", () => { resolve(); }));
   const { port } = server.address() as AddressInfo;
   try {
     return await send(port, method, path, authorization);
   } finally {
     server.closeAllConnections();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => server.close(() => { resolve(); }));
   }
 }
 
@@ -50,8 +50,8 @@ export function send(
     const req = http.request({ host: "127.0.0.1", port, method, path, headers }, (res) => {
       let body = "";
       res.setEncoding("utf8");
-      res.on("data", (chunk) => (body += chunk));
-      res.on("end", () => resolve({ status: res.statusCode ?? 0, body, elapsedMs: Date.now() - started }));
+      res.on("data", (chunk) => (body += String(chunk)));
+      res.on("end", () => { resolve({ status: res.statusCode ?? 0, body, elapsedMs: Date.now() - started }); });
     });
     req.on("error", reject);
     req.end();

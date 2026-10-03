@@ -11,6 +11,7 @@ Contributor and agent notes. Behaviour, rationale and configuration live in
 | `npm test` | full jest suite; ~15 s, no external services needed |
 | `npx jest src/__tests__/tokenBucket.test.ts` | the fast level — pure unit, no sockets |
 | `npm run typecheck` | `tsc --noEmit` over **all** of `src/`, tests included |
+| `npm run lint` | `eslint . --max-warnings 0`, shared `@v-m-pioneer-trading/eslint-config` (meta#105); CI test job runs it |
 | `npm run build` | `tsc -p tsconfig.build.json` → `dist/`, production sources only |
 | `npm start` | `node dist/server.js` |
 

@@ -64,6 +64,10 @@ jobs:
       # Without this step nothing in CI ever ran the typecheck script.
       - run: npm run typecheck
 
+      # Shared lint config: @v-m-pioneer-trading/eslint-config (meta#105).
+      # --max-warnings 0 is in the script, so a warning fails like an error.
+      - run: npm run lint
+
       - run: npm test
 
   docker:

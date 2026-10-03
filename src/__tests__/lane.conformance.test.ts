@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import { readFileSync } from "fs";
 import http from "http";
-import { AddressInfo } from "net";
+import type { AddressInfo } from "net";
 import { join } from "path";
 import request from "supertest";
 import { useHarness } from "../testSupport/gatewayHarness";
@@ -135,7 +135,9 @@ const assertKnownKeys = (c: GatewayCase) => {
   check("request", c.request);
   check("center", c.center);
   check("expect", c.expect);
-  if (c.expect.outcome !== "lane") throw new Error(`${c.name}: outcome "${c.expect.outcome}" is not a lane`);
+  // Fixture JSON is not guaranteed to match the declared type, so the guard stays: compare as a plain string.
+  const outcome: string = c.expect.outcome;
+  if (outcome !== "lane") throw new Error(`${c.name}: outcome "${outcome}" is not a lane`);
   const auth = c.request.authorization;
   const shapeOk =
     auth === null ||
@@ -175,7 +177,7 @@ describe("introspection fixture v6", () => {
     try {
       await send(port, "GET", "/", ["Bearer a", "", "Bearer b"]);
     } finally {
-      await new Promise<void>((resolve) => probe.close(() => resolve()));
+      await new Promise<void>((resolve) => probe.close(() => { resolve(); }));
     }
     const lines = [];
     for (let i = 0; i < seen[0].length; i += 2) {
@@ -192,7 +194,7 @@ describe("gateway cases through the real app", () => {
   beforeEach(() => {
     fetchSpy = jest.spyOn(globalThis, "fetch");
   });
-  afterEach(() => fetchSpy.mockRestore());
+  afterEach(() => { fetchSpy.mockRestore(); });
 
   /** Calls the gateway made to `url`, whether or not anything answered them. */
   const callsTo = (url: string) => fetchSpy.mock.calls.filter(([target]) => String(target) === url).length;
@@ -223,7 +225,8 @@ describe("gateway cases through the real app", () => {
     expect(JSON.parse(res.body)).toEqual({ data: "ok" });
     expect(gw.spaceTraders.requests).toHaveLength(1);
 
-    const metrics = await request(gateway).get("/metrics");
+    const metricsRes = await request(gateway).get("/metrics");
+    const metrics = { body: metricsRes.body as { queues: Record<string, { latencyMs: { count: number } }> } };
     const other = c.expect.lane === "interactive" ? "background" : "interactive";
     expect(metrics.body.queues[c.expect.lane].latencyMs.count).toBe(1);
     expect(metrics.body.queues[other].latencyMs.count).toBe(0);
@@ -239,6 +242,6 @@ describe("gateway cases through the real app", () => {
     }
   });
 
-  it.skip.each(CALLING_SERVICE_CASES)("%s (a calling-service verdict; the gateway only picks a lane)", () => {});
+  it.skip.each(CALLING_SERVICE_CASES)("%s (a calling-service verdict; the gateway only picks a lane)", () => undefined);
 });
 

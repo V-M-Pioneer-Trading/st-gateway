@@ -14,7 +14,7 @@
  */
 
 import http from "http";
-import { AddressInfo } from "net";
+import type { AddressInfo } from "net";
 
 export const INTROSPECTION_PATH = "/auth/v1/introspect";
 export const TEST_INTROSPECTION_SECRET = "test-introspection-secret";
@@ -64,7 +64,7 @@ export class FakeCenter {
   constructor() {
     this.server = http.createServer((req, res) => {
       let body = "";
-      req.on("data", (c) => (body += c));
+      req.on("data", (c) => (body += String(c)));
       req.on("end", () => {
         const token = new URLSearchParams(body).get("token");
         this.requests.push({
@@ -106,7 +106,7 @@ export class FakeCenter {
   async start(): Promise<string> {
     await new Promise<void>((resolve) => this.server.listen(0, "127.0.0.1", resolve));
     const { port } = this.server.address() as AddressInfo;
-    return `http://127.0.0.1:${port}${INTROSPECTION_PATH}`;
+    return `http://127.0.0.1:${String(port)}${INTROSPECTION_PATH}`;
   }
 
   async stop() {
@@ -115,7 +115,10 @@ export class FakeCenter {
     for (const timer of this.pending) clearTimeout(timer);
     this.pending.clear();
     this.server.closeAllConnections();
-    await new Promise<void>((resolve, reject) => this.server.close((err) => (err ? reject(err) : resolve())));
+    await new Promise<void>((resolve, reject) => this.server.close((err) => {
+        if (err) reject(err);
+        else resolve();
+      }));
   }
 }
 
@@ -124,6 +127,6 @@ export async function unreachableCenterUrl(): Promise<string> {
   const probe = http.createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   const { port } = probe.address() as AddressInfo;
-  await new Promise<void>((resolve) => probe.close(() => resolve()));
-  return `http://127.0.0.1:${port}${INTROSPECTION_PATH}`;
+  await new Promise<void>((resolve) => probe.close(() => { resolve(); }));
+  return `http://127.0.0.1:${String(port)}${INTROSPECTION_PATH}`;
 }

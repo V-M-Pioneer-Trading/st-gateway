@@ -261,6 +261,7 @@ included, changes nothing.
 | `npm install` | install dependencies |
 | `npm test` | jest + supertest against in-process fake SpaceTraders, auth-service and introspection servers |
 | `npm run typecheck` | `tsc --noEmit` over `src/`, tests included |
+| `npm run lint` | `eslint . --max-warnings 0` with the shared `@v-m-pioneer-trading/eslint-config` (meta#105); runs in the CI test job |
 | `npm run build` | compile to `dist/` — production sources only |
 | `npm start` | run `dist/server.js` |
 | `npm run dev` | build, then start |
