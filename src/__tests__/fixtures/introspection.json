@@ -1,6 +1,6 @@
 {
-  "$comment": "Canonical token-introspection conditions: what auth-service (the center) answers, and what a calling service must answer its own caller for each. Source of truth for the conformance tests in the TS introspection client package (fleet-service, automation-service, st-gateway), agent-service (Go) and navigation-service (Java), which vendor this file verbatim. See ../docs/design/token-introspection.md and auth-design.md decision 21. DECIDED 2026-09-20, NOT SHIPPED: no service behaves this way yet — rollout is meta#80. Assertion vocabulary: a case is a route declaration, an inbound Authorization header, a stubbed center, and the expected outcome. `route.requires` is \"none\" (no credential declared), \"session\" (any verified session) or a scope literal. `expect.outcome` is \"proceed\" (the middleware ran the handler) or \"reject\". `expect.identity` is the {sub, kind, scopes} handed to the handler, or null for a visitor; `kind` is the center's answer and must be used verbatim, never re-derived from the `sub` prefix, and `scopes` is the `scope` string split on whitespace RUNS with empties discarded, matching every verifier live today. `expect.centerCalls` is how many HTTP requests the client made to the center for this one inbound request — 0 and 1 are both assertions, and 2 fails. An unknown key in `expect` must fail the case rather than be skipped, or a copy that falls behind quietly checks less. No case may be satisfiable by an empty or absent answer: every rejection asserts its exact message, every proceed asserts the identity, and every case asserts the call count (meta#79). VERSION 2 (2026-09-21, owner's delegate) adds cases and changes none: default-deny applies to MUTATING methods only, `GET`, `HEAD` and `OPTIONS` being the safe methods of RFC 9110 §9.2.1, so a safe method on a route declaring \"none\" proceeds as a visitor instead of answering 500. `route.method` is the method the request will actually be handled as — never a method-override header, and for a framework that dispatches HEAD to the GET handler (Express does) a HEAD of a route declared for GET arrives here as the requirement GET declared. It is compared case-insensitively; scope literals are compared exactly, and the bearer scheme case-insensitively. THE EXEMPTION IS FROM DEFAULT-DENY ONLY: a safe method on a route that DID declare a session or a scope is enforced exactly as a POST is. Read \"none\" precisely: it means the route DECLARED that no credential is needed. It is not the same thing as a route an adapter could find no declaration for — \"undeclared\" has no representation in this file, and an adapter must treat a resolver miss as a loud failure (the 500 above) and never as \"none\". Everything about how an adapter binds a requirement to a route — prefix-mounted routers, trailing slashes, case-variant paths, parameterised paths, `app.all` handlers answering OPTIONS — is outside this file's reach and is the adapter's own obligation to test. VERSION 3 (2026-09-25, meta#87) adds cases and changes none: an active answer may leave the `scope` key out, as RFC 7662 allows, and a client reads the absence exactly as `\"scope\":\"\"` — no scopes, never a malformed answer. The center itself always sends the key (auth-service#4), so these cases are a client's obligation only and are not ones the center can produce. VERSION 4 (2026-09-26) adds cases and changes none: `request.authorization` is EITHER a string — one `Authorization` header line, or null for none — OR an array of two or more strings, each element one header line in the order sent, an empty string being an empty line. More than one `Authorization` line, whatever the lines hold, is no credential, and the center is not called. The count comes from the raw header list: never from a value joined with \", \" and then split into parts (Go's `Header.Values` and Tomcat's `getHeaders` keep every line, and joining `Bearer a` with an empty second line invents the token `a,`), and never from a parser that keeps one line and drops the rest (Node's HTTP parser discards duplicate `authorization` lines and keeps the first; only `req.rawHeaders` shows how many arrived). VERSION 5 (2026-09-30, ts-introspection-client#6) adds cases and changes none: a center answer whose JSON carries the same top-level key more than once is a MALFORMED answer, exactly as an unparseable body is, and the client answers `centerUnavailable` (calling service) or lanes `background` (gateway) after one call to the center. Reading it as \"the last value wins\" is what `JSON.parse` does, and it would let the identity depend on the parser: `{\"sub\":\"a\",\"sub\":\"b\"}` is user a to a strict reader and user b to a lenient one. The center marshals a struct and never produces a duplicated key, so this is a client-only obligation, pinned so that the Go, Java and TS clients agree on what malformed means. The file holds forty-one calling-service cases and thirteen gateway cases, fifty-four in all.",
-  "version": 5,
+  "$comment": "Canonical token-introspection conditions: what auth-service (the center) answers, and what a calling service must answer its own caller for each. Source of truth for the conformance tests in the TS introspection client package (fleet-service, automation-service, st-gateway), agent-service (Go) and navigation-service (Java), which vendor this file verbatim. See ../docs/design/token-introspection.md and auth-design.md decision 21. DECIDED 2026-09-20, NOT SHIPPED: no service behaves this way yet — rollout is meta#80. Assertion vocabulary: a case is a route declaration, an inbound Authorization header, a stubbed center, and the expected outcome. `route.requires` is \"none\" (no credential declared), \"session\" (any verified session) or a scope literal. `expect.outcome` is \"proceed\" (the middleware ran the handler) or \"reject\". `expect.identity` is the {sub, kind, scopes} handed to the handler, or null for a visitor; `kind` is the center's answer and must be used verbatim, never re-derived from the `sub` prefix, and `scopes` is the `scope` string split on RUNS of the four ASCII separators SPACE, TAB, CR and LF with empties discarded — no other character separates scopes (see VERSION 6). `expect.centerCalls` is how many HTTP requests the client made to the center for this one inbound request — 0 and 1 are both assertions, and 2 fails. An unknown key in `expect` must fail the case rather than be skipped, or a copy that falls behind quietly checks less. No case may be satisfiable by an empty or absent answer: every rejection asserts its exact message, every proceed asserts the identity, and every case asserts the call count (meta#79). VERSION 2 (2026-09-21, owner's delegate) adds cases and changes none: default-deny applies to MUTATING methods only, `GET`, `HEAD` and `OPTIONS` being the safe methods of RFC 9110 §9.2.1, so a safe method on a route declaring \"none\" proceeds as a visitor instead of answering 500. `route.method` is the method the request will actually be handled as — never a method-override header, and for a framework that dispatches HEAD to the GET handler (Express does) a HEAD of a route declared for GET arrives here as the requirement GET declared. It is compared case-insensitively; scope literals are compared exactly, and the bearer scheme case-insensitively. THE EXEMPTION IS FROM DEFAULT-DENY ONLY: a safe method on a route that DID declare a session or a scope is enforced exactly as a POST is. Read \"none\" precisely: it means the route DECLARED that no credential is needed. It is not the same thing as a route an adapter could find no declaration for — \"undeclared\" has no representation in this file, and an adapter must treat a resolver miss as a loud failure (the 500 above) and never as \"none\". Everything about how an adapter binds a requirement to a route — prefix-mounted routers, trailing slashes, case-variant paths, parameterised paths, `app.all` handlers answering OPTIONS — is outside this file's reach and is the adapter's own obligation to test. VERSION 3 (2026-09-25, meta#87) adds cases and changes none: an active answer may leave the `scope` key out, as RFC 7662 allows, and a client reads the absence exactly as `\"scope\":\"\"` — no scopes, never a malformed answer. The center itself always sends the key (auth-service#4), so these cases are a client's obligation only and are not ones the center can produce. VERSION 4 (2026-09-26) adds cases and changes none: `request.authorization` is EITHER a string — one `Authorization` header line, or null for none — OR an array of two or more strings, each element one header line in the order sent, an empty string being an empty line. More than one `Authorization` line, whatever the lines hold, is no credential, and the center is not called. The count comes from the raw header list: never from a value joined with \", \" and then split into parts (Go's `Header.Values` and Tomcat's `getHeaders` keep every line, and joining `Bearer a` with an empty second line invents the token `a,`), and never from a parser that keeps one line and drops the rest (Node's HTTP parser discards duplicate `authorization` lines and keeps the first; only `req.rawHeaders` shows how many arrived). VERSION 5 (2026-09-30, ts-introspection-client#6) adds cases and changes none: a center answer whose JSON carries the same top-level key more than once is a MALFORMED answer, exactly as an unparseable body is, and the client answers `centerUnavailable` (calling service) or lanes `background` (gateway) after one call to the center. Reading it as \"the last value wins\" is what `JSON.parse` does, and it would let the identity depend on the parser: `{\"sub\":\"a\",\"sub\":\"b\"}` is user a to a strict reader and user b to a lenient one. The center marshals a struct and never produces a duplicated key, so this is a client-only obligation, pinned so that the Go, Java and TS clients agree on what malformed means. VERSION 6 (2026-10-03, owner's decision, meta#103) adds cases and changes none. (a) SCOPE SEPARATORS are exactly SPACE U+0020, TAB U+0009, CR U+000D and LF U+000A, matched in runs; leading, trailing and repeated separators yield no empty scope. Every other character — VT U+000B, FF U+000C, U+0085, NO-BREAK SPACE U+00A0, U+2000–U+200A, EM SPACE U+2003, U+2028, U+3000, U+FEFF, any Unicode space — is PART OF the scope token, so `fleet:control` joined to another scope by U+00A0 is one opaque scope that is not `fleet:control`, and the route answers 403. This is what the Go and Java clients already did; the TS client split on `/\\s+/`, which includes every Unicode space and VT and FF, and auth-service's own operator routes on `strings.Fields`, which includes them too. (b) KEY CASE: two top-level keys of a center answer that are equal IGNORING CASE are a duplicate, a malformed answer exactly as version 5's exact repeat is, and so is a contract key (`active`, `sub`, `scope`, `exp`, `kind`) spelled any way but its own, even once. A reader comparing keys exactly and one binding them case-insensitively (Go's encoding/json) would read such a body differently, so neither reading may be taken. The cases pin ASCII case variants only: the clients lower keys with their language's Unicode lowering, which agrees on every ASCII letter but not on every non-ASCII one (Go maps U+0130 to one character, Java and JavaScript to two). Keys below the top level keep version 5's rule — an exact repeat within one object, at any depth, is malformed; a case variant there is not. The center marshals a struct and produces none of these bodies. The file holds fifty-one calling-service cases and fourteen gateway cases, sixty-five in all.",
+  "version": 6,
   "contract": {
     "endpoint": {
       "method": "POST",
@@ -251,7 +251,7 @@
     },
     {
       "name": "active-with-irregular-scope-whitespace",
-      "why": "`scope` is space-delimited by convention, not by guarantee, and the center returns it verbatim from the Clerk claim. All five verifiers live today split on whitespace RUNS and discard empties (`strings.Fields` in Go, `/\\s+/` in TS, `\\\\s+` in Java). A client that splits on a single space literal gets [\"fleet:control\", \"\", \"agent:reset\\tuniverse:refresh\", \"\"] here, fails to find the required scope at all, and answers 403 for a token that carries it. The leading run and the trailing space additionally catch a splitter that keeps empties — which the identity assertion catches even where the authorization check would have passed by accident.",
+      "why": "`scope` is space-delimited by convention, not by guarantee, and the center returns it verbatim from the Clerk claim. Clients split on RUNS of space, tab, CR and LF and discard empties (version 6 narrowed this from \"whitespace\": see `scope-joined-by-no-break-space` and the cases after it). A client that splits on a single space literal gets [\"fleet:control\", \"\", \"agent:reset\\tuniverse:refresh\", \"\"] here, fails to find the required scope at all, and answers 403 for a token that carries it. The leading run and the trailing space additionally catch a splitter that keeps empties — which the identity assertion catches even where the authorization check would have passed by accident.",
       "route": { "method": "POST", "requires": "universe:refresh" },
       "request": { "authorization": "Bearer operator.token.twelve" },
       "center": {
@@ -264,6 +264,150 @@
           "sub": "user_31qP8k2cQeXampleOperator",
           "kind": "operator",
           "scopes": ["fleet:control", "agent:reset", "universe:refresh"]
+        },
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "active-with-only-spaces-in-scope",
+      "why": "Version 6. A `scope` of nothing but separators is no scopes, exactly as `\"scope\":\"\"`: the identity carries an empty list, never a list of empty strings, and a session route lets it through. Pins the discarded empties at the edge where there is nothing else.",
+      "route": { "method": "GET", "requires": "session" },
+      "request": { "authorization": "Bearer guest.token.three" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleGuest\",\"scope\":\"   \",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "proceed",
+        "identity": {
+          "sub": "user_31qP8k2cQeXampleGuest",
+          "kind": "operator",
+          "scopes": []
+        },
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "scope-joined-by-several-spaces",
+      "why": "Version 6. Leading, repeated and trailing SPACES only: a run is one separator and the empties are discarded. A client splitting on a single space literal and keeping the pieces fails the identity assertion even though the authorization check would pass.",
+      "route": { "method": "POST", "requires": "agent:reset" },
+      "request": { "authorization": "Bearer operator.token.thirteen" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"   fleet:control    agent:reset   \",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "proceed",
+        "identity": {
+          "sub": "user_31qP8k2cQeXampleOperator",
+          "kind": "operator",
+          "scopes": ["fleet:control", "agent:reset"]
+        },
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "scope-joined-by-tab",
+      "why": "Version 6. A TAB alone separates two scopes: it is one of the four separators (space, tab, CR, LF). The required scope is the second piece, and the identity is asserted, so a client that dropped tab from its separators — reading RFC 6749 §3.3's SP-only grammar literally — fails here.",
+      "route": { "method": "POST", "requires": "agent:reset" },
+      "request": { "authorization": "Bearer operator.token.fourteen" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\\tagent:reset\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "proceed",
+        "identity": {
+          "sub": "user_31qP8k2cQeXampleOperator",
+          "kind": "operator",
+          "scopes": ["fleet:control", "agent:reset"]
+        },
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "scope-joined-by-no-break-space",
+      "why": "Version 6. Only space, tab, CR and LF separate scopes. Here `fleet:control` is joined to the next scope by NO-BREAK SPACE U+00A0, so the token carries ONE scope, `fleet:control\\u00a0agent:reset`, and not `fleet:control`. A client splitting on `/\\s+/` — JavaScript's `\\s` includes U+00A0 — finds `fleet:control` and proceeds; clerk-client did until 2.0.1. 403 with the generic sentence.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer operator.token.fifteen" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\\u00a0agent:reset\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "reject",
+        "status": 403,
+        "message": "this action requires a scope this session does not carry",
+        "messageMustNotContain": ["fleet:control", "agent:reset"],
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "scope-joined-by-em-space",
+      "why": "Version 6. The same rule with EM SPACE U+2003, a Unicode space separator (category Zs) that `/\\s+/` and Go's `strings.Fields` both treat as whitespace. The required scope is the SECOND piece, so a client that only mis-splits at the front of the string is caught too. One opaque scope; 403.",
+      "route": { "method": "POST", "requires": "agent:reset" },
+      "request": { "authorization": "Bearer operator.token.sixteen" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\\u2003agent:reset\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "reject",
+        "status": 403,
+        "message": "this action requires a scope this session does not carry",
+        "messageMustNotContain": ["fleet:control", "agent:reset"],
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "scope-joined-by-vertical-tab",
+      "why": "Version 6. VERTICAL TAB U+000B is ASCII whitespace to `/\\s+/`, to Java's `\\s`, to C's `isspace` and to Go's `strings.Fields`, but it is not one of the four separators: one opaque scope, 403. Pins the ASCII edge of the rule, where `\\s` in most regex dialects and the rule part company.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer operator.token.seventeen" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\\u000bagent:reset\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "reject",
+        "status": 403,
+        "message": "this action requires a scope this session does not carry",
+        "messageMustNotContain": ["fleet:control", "agent:reset"],
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "scope-joined-by-form-feed",
+      "why": "Version 6. FORM FEED U+000C, the other ASCII whitespace character that `\\s` matches and the rule does not separate on. One opaque scope; 403, with the required scope second.",
+      "route": { "method": "POST", "requires": "agent:reset" },
+      "request": { "authorization": "Bearer operator.token.eighteen" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\\fagent:reset\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "reject",
+        "status": 403,
+        "message": "this action requires a scope this session does not carry",
+        "messageMustNotContain": ["fleet:control", "agent:reset"],
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "active-with-non-separators-in-scope",
+      "why": "Version 6, asserted through the identity rather than a 403, so a client cannot pass by refusing the token for some other reason. Eleven pieces joined by VT, FF, NEXT LINE U+0085, NO-BREAK SPACE U+00A0, EN QUAD U+2000, HAIR SPACE U+200A, EM SPACE U+2003, LINE SEPARATOR U+2028, IDEOGRAPHIC SPACE U+3000 and ZERO WIDTH NO-BREAK SPACE U+FEFF are ONE scope, kept byte for byte; a CR LF then separates `agent:reset`, which the route requires and finds. Every joining character is whitespace to at least one splitter the fleet has used.",
+      "route": { "method": "POST", "requires": "agent:reset" },
+      "request": { "authorization": "Bearer operator.token.nineteen" },
+      "center": {
+        "status": 200,
+        "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\\u000bx1\\u000cx2\\u0085x3\\u00a0x4\\u2000x5\\u200ax6\\u2003x7\\u2028x8\\u3000x9\\ufeffx10\\r\\nagent:reset\",\"exp\":4102444800,\"kind\":\"operator\"}"
+      },
+      "expect": {
+        "outcome": "proceed",
+        "identity": {
+          "sub": "user_31qP8k2cQeXampleOperator",
+          "kind": "operator",
+          "scopes": ["fleet:control\u000bx1\u000cx2\u0085x3 x4 x5 x6 x7 x8　x9﻿x10", "agent:reset"]
         },
         "centerCalls": 1
       }
@@ -422,6 +566,32 @@
       "route": { "method": "POST", "requires": "fleet:control" },
       "request": { "authorization": "Bearer duplicate.token.one" },
       "center": { "status": 200, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"sub\":\"user_31qP8k2cQeXampleOther\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}" },
+      "expect": {
+        "outcome": "reject",
+        "status": 503,
+        "message": "the authentication service could not process this request",
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "center-returns-case-variant-duplicate-key",
+      "why": "Version 6. `active` and `Active` are the same key ignoring case, so this body names `active` twice and is malformed: 503, one call. A reader that compares keys exactly sees `active:true` and proceeds (clerk-client did until 2.0.1); a case-insensitive struct binding where the last value wins (Go's encoding/json) sees `active:false` and answers 401. Neither may happen: a key's meaning must not depend on which reader the client happens to use. Every well-formed member comes first, so the center's own answer for this token is this body without `Active`.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer duplicate.token.two" },
+      "center": { "status": 200, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\",\"Active\":false}" },
+      "expect": {
+        "outcome": "reject",
+        "status": 503,
+        "message": "the authentication service could not process this request",
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "center-returns-contract-key-in-another-case",
+      "why": "Version 6. A contract key spelled any way but its own is malformed even when it appears only once: here `Scope` and no `scope`. A reader that compares keys exactly reads the scope as ABSENT and lets a session route through with no scopes (clerk-client did until 2.0.1); one that binds case-insensitively reads `fleet:control`. The Go and Java clients already refused it. 503, one call, on the session route where the exact reader would have proceeded. The center's own answer for this token is this body with `scope` spelled correctly.",
+      "route": { "method": "GET", "requires": "session" },
+      "request": { "authorization": "Bearer misspelled.token.one" },
+      "center": { "status": 200, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleGuest\",\"Scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}" },
       "expect": {
         "outcome": "reject",
         "status": 503,
@@ -736,6 +906,13 @@
       "why": "The gateway's half of the duplicate-key rule. The same body as `center-returns-duplicate-key` is a malformed answer, so the lane is background, never the interactive lane a last-wins read of `kind` might grant, and never a 503. One call to the center. The center does not produce this body; it pins that st-gateway, which reads the answer through the same TS client, agrees with the other clients about what malformed means.",
       "request": { "authorization": "Bearer duplicate.token.one" },
       "center": { "status": 200, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"sub\":\"user_31qP8k2cQeXampleOther\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}" },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 1 }
+    },
+    {
+      "name": "gateway-center-returns-case-variant-duplicate-key",
+      "why": "Version 6, the gateway's half of the case-insensitive duplicate rule. `kind` and `Kind` are one key named twice, so the answer is malformed and the lane is background. An exact-comparing reader takes `kind:operator` and grants the interactive lane (st-gateway did, through clerk-client 2.0.0). Every well-formed member comes first, so the center's own answer for this token is this body without `Kind`. One call.",
+      "request": { "authorization": "Bearer duplicate.token.three" },
+      "center": { "status": 200, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\",\"Kind\":\"machine\"}" },
       "expect": { "outcome": "lane", "lane": "background", "centerCalls": 1 }
     }
   ]

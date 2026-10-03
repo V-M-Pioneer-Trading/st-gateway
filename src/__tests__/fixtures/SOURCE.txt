@@ -1,22 +1,29 @@
 introspection.json is vendored verbatim. It is not maintained here.
 
   original    V-M-Pioneer-Trading/meta, path fixtures/introspection.json
-  meta commit aa877e734f40078aca91b7f9b85e7502cd5916be
-  blob        279f08333a8151808f180ef411e124bb46ee8a97
-  vendored    2026-09-30
-  version     5
-  cases       41 calling-service + 13 gateway = 54
-  bytes       56516
-  sha256      ffbb7aa932d8d8523da125a0ff9a93f1fd771d5a32841d7e03ee25ec7b1315b7
+  meta commit 3cff53921b1e691997ef0c94b4d1945df17efa90
+  blob        cb5a8973a3d59f81ac5399b0dea5c7dc28d52b29
+  vendored    2026-10-03
+  version     6
+  cases       51 calling-service + 14 gateway = 65
+  bytes       69322
+  sha256      3918d6790d583f0346498a1f61482d0bb846f46a24706d4e9e09181eac5f62c0
 
-The commit above is on meta's main: the squash of V-M-Pioneer-Trading/meta#94
-("Fixture v5: a duplicated key is a malformed answer
-(ts-introspection-client#6)").
+The commit above is the head of meta pull request #107, "Fixture v6: what
+separates scopes, and top-level keys ignoring case". That pull request is
+merged with a merge commit, not squashed, so this commit lands on meta's main
+unchanged; had it been squashed, the commit above would be replaced with the
+squash commit, and the blob, bytes and sha256 would not change. Version 6 adds
+ten calling-service cases and one gateway case,
+gateway-center-returns-case-variant-duplicate-key: `kind` and `Kind` in one
+answer are one key named twice, so the lane is background. clerk-client 2.0.0
+compared keys exactly and laned it interactive; 2.0.1 is the first release
+that passes it, which is why this copy and the 2.0.1 bump land together.
 
-st-gateway drives the thirteen gatewayCases only. The forty-one calling-service
+st-gateway drives the fourteen gatewayCases only. The fifty-one calling-service
 cases describe a verdict (proceed, 401, 403, 503), and the gateway never
 reaches one: it picks a queue lane and nothing else. Those cases are driven by
-ts-introspection-client's own suite, which vendors the same version. The
+clerk-client's own suite, which vendors the same version. The
 conformance test here skips them by name and asserts their count, so a case
 added upstream in either group fails here until someone decides what it
 means for the gateway.
