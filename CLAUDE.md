@@ -135,10 +135,16 @@ error body that a no-op refresh still has to relay.
 
 **At startup**: `gatewayConfigFromEnv()` (`configFromEnv()` →
 `requireAuthServiceSharedSecret()` → `requireIntrospection()`) →
-`createApp()` → `listen()`. Every failure mode is a crash before the port is
+`createGateway()` → `listen()` → signal handlers. Every failure mode is a crash before the port is
 bound, never a running-but-wrong process. A missing `AUTH_INTROSPECTION_*` is
 therefore a crash-loop, and every game call in the system 502s at its caller:
 the stack must carry the variables before an image that needs them runs.
+
+**At shutdown**: SIGTERM/SIGINT (`src/shutdown.ts`) stop accepting, let in-flight
+requests finish for at most 10 s, stop the token bucket's timer, exit 0 (also
+when the bound is hit: the stragglers' connections are closed first). The bucket
+stays running during the drain: in-flight calls still queue on it. `docker stop`
+kills after 10 s by default; raise `stop_grace_period` to use the whole bound.
 
 ## Effectively public — do not change casually
 

@@ -31,6 +31,7 @@ export class TokenBucket {
   private queues: Record<Priority, Waiter[]> = { interactive: [], background: [] };
   private stats: Record<Priority, LatencyStats> = { interactive: emptyStats(), background: emptyStats() };
   private timer: NodeJS.Timeout | null = null;
+  private stopped = false;
 
   constructor(private rps: number, private burst: number) {
     if (!Number.isFinite(rps) || rps <= 0 || !Number.isFinite(burst) || burst < 1) {
@@ -45,6 +46,13 @@ export class TokenBucket {
       this.queues[priority].push({ priority, resolve, enqueuedAt: Date.now() });
       this.drain();
     });
+  }
+
+  /** Clears the refill timer and starts no more. Callers still waiting in a queue are never released: stop only once none is. */
+  stop(): void {
+    this.stopped = true;
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
   }
 
   getMetrics(): Record<Priority, QueueMetrics> {
@@ -87,7 +95,7 @@ export class TokenBucket {
 
       waiter.resolve();
     }
-    if (this.queueLength() > 0 && this.timer === null) {
+    if (!this.stopped && this.queueLength() > 0 && this.timer === null) {
       const msUntilNextToken = Math.max(((1 - this.tokens) / this.rps) * 1000, 1);
       this.timer = setTimeout(() => {
         this.timer = null;

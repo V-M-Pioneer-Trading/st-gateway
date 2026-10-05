@@ -35,6 +35,7 @@ import {
 import type { GatewayConfig } from "./config";
 import { gatewayConfigFromEnv } from "./config";
 import { TokenBucket, type Priority } from "./tokenBucket";
+import { installGracefulShutdown } from "./shutdown";
 import { createAuthTokenClient, type TokenFailure } from "./authServiceClient";
 
 const RETRYABLE_5XX = new Set([500, 502, 503, 504]);
@@ -165,7 +166,8 @@ function retryDelayMs(attempt: number, config: GatewayConfig, retryAfterHeader: 
   return Math.min(Math.max(backoff, retryAfterMs), config.maxRetryDelayMs);
 }
 
-export function createApp(config: GatewayConfig) {
+/** The app and the means to stop what it keeps running (the token bucket's refill timer). */
+export function createGateway(config: GatewayConfig) {
   const app = express();
   const bucket = new TokenBucket(config.rateLimitRps, config.rateLimitBurst);
   const authTokenClient = createAuthTokenClient({
@@ -341,8 +343,10 @@ export function createApp(config: GatewayConfig) {
     });
   });
 
-  return app;
+  return { app, stop: () => { bucket.stop(); } };
 }
+
+export const createApp = (config: GatewayConfig) => createGateway(config).app;
 
 if (require.main === module) {
   // Throws, before the port is bound, on a bad number or a missing
@@ -350,7 +354,9 @@ if (require.main === module) {
   // AUTH_INTROSPECTION_SECRET. Any CLERK_* variables still in the
   // environment are ignored.
   const config: GatewayConfig = gatewayConfigFromEnv();
-  createApp(config).listen(config.port, () => {
+  const { app, stop } = createGateway(config);
+  const server = app.listen(config.port, () => {
     console.log(`st-gateway listening on http://localhost:${String(config.port)}`);
   });
+  installGracefulShutdown(server, stop);
 }
