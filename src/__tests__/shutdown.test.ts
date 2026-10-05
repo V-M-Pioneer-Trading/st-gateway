@@ -29,6 +29,7 @@ describe("createShutdown: order and bound", () => {
     const { server, drained } = stubServer(calls);
     const shutdown = createShutdown({
       server,
+      drain: () => { calls.push("drain"); },
       stop: () => { calls.push("stop"); },
       exit: (code) => { calls.push(`exit ${String(code)}`); },
       log: (line) => { calls.push(`log ${line}`); },
@@ -43,42 +44,42 @@ describe("createShutdown: order and bound", () => {
     const { shutdown, drained, steps } = setup();
 
     shutdown("SIGTERM");
-    expect(steps()).toEqual(["close"]);
+    expect(steps()).toEqual(["drain", "close"]);
 
     // Still draining: nothing else happens however long the requests take, up to the bound.
     jest.advanceTimersByTime(SHUTDOWN_TIMEOUT_MS - 1);
-    expect(steps()).toEqual(["close"]);
+    expect(steps()).toEqual(["drain", "close"]);
 
     drained();
-    expect(steps()).toEqual(["close", "stop", "exit 0"]);
+    expect(steps()).toEqual(["drain", "close", "stop", "exit 0"]);
   });
 
   it("exits at once when nothing is in flight", () => {
     const { shutdown, drained, steps } = setup();
     shutdown("SIGINT");
     drained();
-    expect(steps()).toEqual(["close", "stop", "exit 0"]);
+    expect(steps()).toEqual(["drain", "close", "stop", "exit 0"]);
   });
 
   it("gives up at the bound: closes the remaining connections, stops the timers, exits 0", () => {
-    const { shutdown, steps, calls } = setup(); // 10 s by default
+    const { shutdown, steps, calls } = setup(); // 8 s by default
 
     shutdown("SIGTERM");
-    jest.advanceTimersByTime(9_999);
-    expect(steps()).toEqual(["close"]);
+    jest.advanceTimersByTime(7_999);
+    expect(steps()).toEqual(["drain", "close"]);
 
     jest.advanceTimersByTime(1);
-    expect(steps()).toEqual(["close", "closeAll", "stop", "exit 0"]);
-    expect(calls.some((c) => c.startsWith("log st-gateway: in-flight requests still running after 10000 ms"))).toBe(true);
+    expect(steps()).toEqual(["drain", "close", "closeAll", "stop", "exit 1"]);
+    expect(calls.some((c) => c.startsWith("log st-gateway: in-flight requests still running after 8000 ms"))).toBe(true);
   });
 
   it("honours another bound", () => {
     const { shutdown, steps } = setup(250);
     shutdown("SIGTERM");
     jest.advanceTimersByTime(249);
-    expect(steps()).toEqual(["close"]);
+    expect(steps()).toEqual(["drain", "close"]);
     jest.advanceTimersByTime(1);
-    expect(steps()).toEqual(["close", "closeAll", "stop", "exit 0"]);
+    expect(steps()).toEqual(["drain", "close", "closeAll", "stop", "exit 1"]);
   });
 
   it("exits only once: a second signal, or a drain that ends after the bound, does nothing more", () => {
@@ -89,7 +90,7 @@ describe("createShutdown: order and bound", () => {
     drained();
     shutdown("SIGTERM");
     jest.advanceTimersByTime(60_000);
-    expect(steps()).toEqual(["close", "closeAll", "stop", "exit 0"]);
+    expect(steps()).toEqual(["drain", "close", "closeAll", "stop", "exit 1"]);
   });
 
   it("sweeps idle keep-alive connections while it waits, so they cannot hold the drain open", () => {
@@ -152,6 +153,7 @@ describe("graceful shutdown of a real gateway", () => {
     const exited = new Promise<void>((resolve) => {
       const shutdown = createShutdown({
         server: listening,
+        drain: () => { gateway.drain(); },
         stop: () => { order.push("stop"); gateway.stop(); },
         exit: (code) => { order.push("exit"); exitCode = code; resolve(); },
         log: () => undefined,
@@ -171,6 +173,32 @@ describe("graceful shutdown of a real gateway", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("answers Connection: close from the drain on, on new requests and on ones already in flight, and not before", async () => {
+    gw.spaceTraders.respondAfter(200);
+    const { gateway, port } = await listen();
+    const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+    const connectionHeader = (): Promise<string | undefined> =>
+      new Promise((resolve, reject) => {
+        http
+          .get({ host: "127.0.0.1", port, path: "/proxy/my/ships", headers: { Authorization: "Bearer x" }, agent }, (res) => {
+            res.resume();
+            res.on("end", () => { resolve(res.headers.connection); });
+          })
+          .on("error", reject);
+      });
+    try {
+      expect(await connectionHeader()).toBe("keep-alive");
+
+      const inFlight = connectionHeader();
+      await sleep(50);
+      gateway.drain(); // the request is already inside the proxy
+      expect(await inFlight).toBe("close");
+      expect(await connectionHeader()).toBe("close");
+    } finally {
+      agent.destroy();
+    }
+  });
+
   it("does not wait for an idle keep-alive connection", async () => {
     const { gateway, listening, port } = await listen();
     const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
@@ -178,7 +206,7 @@ describe("graceful shutdown of a real gateway", () => {
       expect((await get(port, agent)).status).toBe(200); // the socket now sits idle in the agent's pool
       const started = Date.now();
       await new Promise<void>((resolve) => {
-        createShutdown({ server: listening, stop: () => { gateway.stop(); }, exit: () => { resolve(); }, log: () => undefined })("SIGTERM");
+        createShutdown({ server: listening, drain: () => { gateway.drain(); }, stop: () => { gateway.stop(); }, exit: () => { resolve(); }, log: () => undefined })("SIGTERM");
       });
       expect(Date.now() - started).toBeLessThan(2_000);
     } finally {
@@ -186,7 +214,7 @@ describe("graceful shutdown of a real gateway", () => {
     }
   });
 
-  it("closes a request that outlasts the bound and still exits 0", async () => {
+  it("closes a request that outlasts the bound and exits 1", async () => {
     gw.spaceTraders.respondAfter(1_500);
     const { gateway, listening, port } = await listen();
     const inFlight = get(port).catch((err: unknown) => err);
@@ -196,6 +224,7 @@ describe("graceful shutdown of a real gateway", () => {
     await new Promise<void>((resolve) => {
       createShutdown({
         server: listening,
+        drain: () => { gateway.drain(); },
         stop: () => { gateway.stop(); },
         exit: (code) => { exitCode = code; resolve(); },
         log: () => undefined,
@@ -203,7 +232,7 @@ describe("graceful shutdown of a real gateway", () => {
       })("SIGTERM");
     });
     expect(Date.now() - started).toBeLessThan(2_000);
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(1);
     expect(await inFlight).toMatchObject({ code: expect.stringMatching(/ECONNRESET|UND_ERR/) as unknown });
   });
 });

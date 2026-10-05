@@ -166,9 +166,20 @@ function retryDelayMs(attempt: number, config: GatewayConfig, retryAfterHeader: 
   return Math.min(Math.max(backoff, retryAfterMs), config.maxRetryDelayMs);
 }
 
-/** The app and the means to stop what it keeps running (the token bucket's refill timer). */
+/** The app, `drain` (answer Connection: close from now on) and `stop` (stop what it keeps running: the token bucket's refill timer). */
 export function createGateway(config: GatewayConfig) {
   const app = express();
+  // Set at shutdown: from then on every response says Connection: close, so a keep-alive caller does not send its
+  // next request down a socket the process is about to drop (that is an ECONNRESET at the caller).
+  let draining = false;
+  app.use((_req, res, next) => {
+    const send = res.writeHead.bind(res) as (...args: unknown[]) => express.Response;
+    (res as { writeHead: unknown }).writeHead = (...args: unknown[]) => {
+      if (draining && !res.headersSent) res.setHeader("Connection", "close");
+      return send(...args);
+    };
+    next();
+  });
   const bucket = new TokenBucket(config.rateLimitRps, config.rateLimitBurst);
   const authTokenClient = createAuthTokenClient({
     authServiceUrl: config.authServiceUrl,
@@ -343,7 +354,11 @@ export function createGateway(config: GatewayConfig) {
     });
   });
 
-  return { app, stop: () => { bucket.stop(); } };
+  return {
+    app,
+    drain: () => { draining = true; },
+    stop: () => { bucket.stop(); },
+  };
 }
 
 export const createApp = (config: GatewayConfig) => createGateway(config).app;
@@ -354,9 +369,9 @@ if (require.main === module) {
   // AUTH_INTROSPECTION_SECRET. Any CLERK_* variables still in the
   // environment are ignored.
   const config: GatewayConfig = gatewayConfigFromEnv();
-  const { app, stop } = createGateway(config);
+  const { app, drain, stop } = createGateway(config);
   const server = app.listen(config.port, () => {
     console.log(`st-gateway listening on http://localhost:${String(config.port)}`);
   });
-  installGracefulShutdown(server, stop);
+  installGracefulShutdown(server, { drain, stop });
 }
