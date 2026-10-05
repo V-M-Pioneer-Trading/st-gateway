@@ -35,6 +35,7 @@ import {
 import type { GatewayConfig } from "./config";
 import { gatewayConfigFromEnv } from "./config";
 import { TokenBucket, type Priority } from "./tokenBucket";
+import { installGracefulShutdown } from "./shutdown";
 import { createAuthTokenClient, type TokenFailure } from "./authServiceClient";
 
 const RETRYABLE_5XX = new Set([500, 502, 503, 504]);
@@ -165,8 +166,20 @@ function retryDelayMs(attempt: number, config: GatewayConfig, retryAfterHeader: 
   return Math.min(Math.max(backoff, retryAfterMs), config.maxRetryDelayMs);
 }
 
-export function createApp(config: GatewayConfig) {
+/** The app, `drain` (answer Connection: close from now on) and `stop` (stop what it keeps running: the token bucket's refill timer). */
+export function createGateway(config: GatewayConfig) {
   const app = express();
+  // Set at shutdown: from then on every response says Connection: close, so a keep-alive caller does not send its
+  // next request down a socket the process is about to drop (that is an ECONNRESET at the caller).
+  let draining = false;
+  app.use((_req, res, next) => {
+    const send = res.writeHead.bind(res) as (...args: unknown[]) => express.Response;
+    (res as { writeHead: unknown }).writeHead = (...args: unknown[]) => {
+      if (draining && !res.headersSent) res.setHeader("Connection", "close");
+      return send(...args);
+    };
+    next();
+  });
   const bucket = new TokenBucket(config.rateLimitRps, config.rateLimitBurst);
   const authTokenClient = createAuthTokenClient({
     authServiceUrl: config.authServiceUrl,
@@ -340,8 +353,14 @@ export function createApp(config: GatewayConfig) {
     });
   });
 
-  return app;
+  return {
+    app,
+    drain: () => { draining = true; },
+    stop: () => { bucket.stop(); },
+  };
 }
+
+export const createApp = (config: GatewayConfig) => createGateway(config).app;
 
 if (require.main === module) {
   // Throws, before the port is bound, on a bad number or a missing
@@ -349,7 +368,9 @@ if (require.main === module) {
   // AUTH_INTROSPECTION_SECRET. Any CLERK_* variables still in the
   // environment are ignored.
   const config: GatewayConfig = gatewayConfigFromEnv();
-  createApp(config).listen(config.port, () => {
+  const { app, drain, stop } = createGateway(config);
+  const server = app.listen(config.port, () => {
     console.log(`st-gateway listening on http://localhost:${String(config.port)}`);
   });
+  installGracefulShutdown(server, { drain, stop });
 }

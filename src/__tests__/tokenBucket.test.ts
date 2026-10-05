@@ -78,3 +78,39 @@ describe("TokenBucket", () => {
     });
   });
 });
+
+describe("TokenBucket.stop", () => {
+  beforeEach(() => { jest.useFakeTimers(); });
+  afterEach(() => { jest.useRealTimers(); });
+
+  it("clears the refill timer a queued waiter armed, and arms none after", async () => {
+    const bucket = new TokenBucket(1, 1);
+    await bucket.acquire("background");
+    void bucket.acquire("background"); // queued: the refill timer is now pending
+    expect(jest.getTimerCount()).toBe(1);
+
+    bucket.stop();
+    expect(jest.getTimerCount()).toBe(0);
+
+    void bucket.acquire("interactive");
+    jest.advanceTimersByTime(10_000);
+    expect(jest.getTimerCount()).toBe(0);
+    expect(bucket.getMetrics().background.depth).toBe(1);
+  });
+
+  it("keeps dispatching until it is stopped", async () => {
+    const bucket = new TokenBucket(1, 1);
+    await bucket.acquire("background");
+    const second = bucket.acquire("background");
+    jest.advanceTimersByTime(1_000);
+    await second;
+    expect(bucket.getMetrics().background.depth).toBe(0);
+  });
+
+  it("is safe to call twice, or with nothing queued", () => {
+    const bucket = new TokenBucket(1, 1);
+    bucket.stop();
+    bucket.stop();
+    expect(jest.getTimerCount()).toBe(0);
+  });
+});

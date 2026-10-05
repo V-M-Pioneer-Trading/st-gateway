@@ -7,7 +7,7 @@
  * given test actually depended on. Overrides now say exactly that.
  */
 
-import { createApp } from "../server";
+import { createGateway } from "../server";
 import type { GatewayConfig } from "../config";
 import { FakeSpaceTraders } from "./fakeSpaceTraders";
 import { FakeAuthService, TEST_AUTH_SERVICE_SHARED_SECRET } from "./fakeAuthService";
@@ -36,8 +36,8 @@ class Gateway {
     await this.center.stop();
   }
 
-  app(overrides: Partial<GatewayConfig> = {}) {
-    return createApp({
+  gateway(overrides: Partial<GatewayConfig> = {}) {
+    return createGateway({
       // Never listened on: every suite drives the app through supertest.
       port: 0,
       spaceTradersBaseUrl: this.spaceTradersUrl,
@@ -52,6 +52,10 @@ class Gateway {
       introspection: { url: this.centerUrl, secret: TEST_INTROSPECTION_SECRET },
       ...overrides,
     });
+  }
+
+  app(overrides: Partial<GatewayConfig> = {}) {
+    return this.gateway(overrides).app;
   }
 }
 
@@ -82,5 +86,7 @@ export const useHarness = () => {
       return current.centerUrl;
     },
     app: (overrides: Partial<GatewayConfig> = {}) => current.app(overrides),
+    /** The app with its stop function, for the tests that listen on a real port. */
+    gateway: (overrides: Partial<GatewayConfig> = {}) => current.gateway(overrides),
   };
 };
