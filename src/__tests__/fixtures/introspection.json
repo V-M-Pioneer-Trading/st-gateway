@@ -1,6 +1,6 @@
 {
-  "$comment": "Canonical token-introspection conditions: what auth-service (the center) answers, and what a calling service must answer its own caller for each. Source of truth for the conformance tests in the TS introspection client package (fleet-service, automation-service, st-gateway), agent-service (Go) and navigation-service (Java), which vendor this file verbatim. See ../docs/design/token-introspection.md and auth-design.md decision 21. DECIDED 2026-09-20, NOT SHIPPED: no service behaves this way yet — rollout is meta#80. Assertion vocabulary: a case is a route declaration, an inbound Authorization header, a stubbed center, and the expected outcome. `route.requires` is \"none\" (no credential declared), \"session\" (any verified session) or a scope literal. `expect.outcome` is \"proceed\" (the middleware ran the handler) or \"reject\". `expect.identity` is the {sub, kind, scopes} handed to the handler, or null for a visitor; `kind` is the center's answer and must be used verbatim, never re-derived from the `sub` prefix, and `scopes` is the `scope` string split on RUNS of the four ASCII separators SPACE, TAB, CR and LF with empties discarded — no other character separates scopes (see VERSION 6). `expect.centerCalls` is how many HTTP requests the client made to the center for this one inbound request — 0 and 1 are both assertions, and 2 fails. An unknown key in `expect` must fail the case rather than be skipped, or a copy that falls behind quietly checks less. No case may be satisfiable by an empty or absent answer: every rejection asserts its exact message, every proceed asserts the identity, and every case asserts the call count (meta#79). VERSION 2 (2026-09-21, owner's delegate) adds cases and changes none: default-deny applies to MUTATING methods only, `GET`, `HEAD` and `OPTIONS` being the safe methods of RFC 9110 §9.2.1, so a safe method on a route declaring \"none\" proceeds as a visitor instead of answering 500. `route.method` is the method the request will actually be handled as — never a method-override header, and for a framework that dispatches HEAD to the GET handler (Express does) a HEAD of a route declared for GET arrives here as the requirement GET declared. It is compared case-insensitively; scope literals are compared exactly, and the bearer scheme case-insensitively. THE EXEMPTION IS FROM DEFAULT-DENY ONLY: a safe method on a route that DID declare a session or a scope is enforced exactly as a POST is. Read \"none\" precisely: it means the route DECLARED that no credential is needed. It is not the same thing as a route an adapter could find no declaration for — \"undeclared\" has no representation in this file, and an adapter must treat a resolver miss as a loud failure (the 500 above) and never as \"none\". Everything about how an adapter binds a requirement to a route — prefix-mounted routers, trailing slashes, case-variant paths, parameterised paths, `app.all` handlers answering OPTIONS — is outside this file's reach and is the adapter's own obligation to test. VERSION 3 (2026-09-25, meta#87) adds cases and changes none: an active answer may leave the `scope` key out, as RFC 7662 allows, and a client reads the absence exactly as `\"scope\":\"\"` — no scopes, never a malformed answer. The center itself always sends the key (auth-service#4), so these cases are a client's obligation only and are not ones the center can produce. VERSION 4 (2026-09-26) adds cases and changes none: `request.authorization` is EITHER a string — one `Authorization` header line, or null for none — OR an array of two or more strings, each element one header line in the order sent, an empty string being an empty line. More than one `Authorization` line, whatever the lines hold, is no credential, and the center is not called. The count comes from the raw header list: never from a value joined with \", \" and then split into parts (Go's `Header.Values` and Tomcat's `getHeaders` keep every line, and joining `Bearer a` with an empty second line invents the token `a,`), and never from a parser that keeps one line and drops the rest (Node's HTTP parser discards duplicate `authorization` lines and keeps the first; only `req.rawHeaders` shows how many arrived). VERSION 5 (2026-09-30, ts-introspection-client#6) adds cases and changes none: a center answer whose JSON carries the same top-level key more than once is a MALFORMED answer, exactly as an unparseable body is, and the client answers `centerUnavailable` (calling service) or lanes `background` (gateway) after one call to the center. Reading it as \"the last value wins\" is what `JSON.parse` does, and it would let the identity depend on the parser: `{\"sub\":\"a\",\"sub\":\"b\"}` is user a to a strict reader and user b to a lenient one. The center marshals a struct and never produces a duplicated key, so this is a client-only obligation, pinned so that the Go, Java and TS clients agree on what malformed means. VERSION 6 (2026-10-03, owner's decision, meta#103) adds cases and changes none. (a) SCOPE SEPARATORS are exactly SPACE U+0020, TAB U+0009, CR U+000D and LF U+000A, matched in runs; leading, trailing and repeated separators yield no empty scope. Every other character — VT U+000B, FF U+000C, U+0085, NO-BREAK SPACE U+00A0, U+2000–U+200A, EM SPACE U+2003, U+2028, U+3000, U+FEFF, any Unicode space — is PART OF the scope token, so `fleet:control` joined to another scope by U+00A0 is one opaque scope that is not `fleet:control`, and the route answers 403. This is what the Go and Java clients already did; the TS client split on `/\\s+/`, which includes every Unicode space and VT and FF, and auth-service's own operator routes on `strings.Fields`, which includes them too. (b) KEY CASE: two top-level keys of a center answer that are equal IGNORING CASE are a duplicate, a malformed answer exactly as version 5's exact repeat is, and so is a contract key (`active`, `sub`, `scope`, `exp`, `kind`) spelled any way but its own, even once. A reader comparing keys exactly and one binding them case-insensitively (Go's encoding/json) would read such a body differently, so neither reading may be taken. The cases pin ASCII case variants only: the clients lower keys with their language's Unicode lowering, which agrees on every ASCII letter but not on every non-ASCII one (Go maps U+0130 to one character, Java and JavaScript to two). Keys below the top level keep version 5's rule — an exact repeat within one object, at any depth, is malformed; a case variant there is not. The center marshals a struct and produces none of these bodies. The file holds fifty-one calling-service cases and fourteen gateway cases, sixty-five in all.",
-  "version": 6,
+  "$comment": "Canonical token-introspection conditions: what auth-service (the center) answers, and what a calling service must answer its own caller for each. Source of truth for the conformance tests in the TS introspection client package (fleet-service, automation-service, st-gateway), agent-service (Go) and navigation-service (Java), which vendor this file verbatim. See ../docs/design/token-introspection.md and auth-design.md decision 21. DECIDED 2026-09-20, NOT SHIPPED: no service behaves this way yet — rollout is meta#80. Assertion vocabulary: a case is a route declaration, an inbound Authorization header, a stubbed center, and the expected outcome. `route.requires` is \"none\" (no credential declared), \"session\" (any verified session) or a scope literal. `expect.outcome` is \"proceed\" (the middleware ran the handler) or \"reject\". `expect.identity` is the {sub, kind, scopes} handed to the handler, or null for a visitor; `kind` is the center's answer and must be used verbatim, never re-derived from the `sub` prefix, and `scopes` is the `scope` string split on RUNS of the four ASCII separators SPACE, TAB, CR and LF with empties discarded — no other character separates scopes (see VERSION 6). `expect.centerCalls` is how many HTTP requests the client made to the center for this one inbound request — 0 and 1 are both assertions, and 2 fails. An unknown key in `expect` must fail the case rather than be skipped, or a copy that falls behind quietly checks less. No case may be satisfiable by an empty or absent answer: every rejection asserts its exact message, every proceed asserts the identity, and every case asserts the call count (meta#79). VERSION 2 (2026-09-21, owner's delegate) adds cases and changes none: default-deny applies to MUTATING methods only, `GET`, `HEAD` and `OPTIONS` being the safe methods of RFC 9110 §9.2.1, so a safe method on a route declaring \"none\" proceeds as a visitor instead of answering 500. `route.method` is the method the request will actually be handled as — never a method-override header, and for a framework that dispatches HEAD to the GET handler (Express does) a HEAD of a route declared for GET arrives here as the requirement GET declared. It is compared case-insensitively; scope literals are compared exactly, and the bearer scheme case-insensitively. THE EXEMPTION IS FROM DEFAULT-DENY ONLY: a safe method on a route that DID declare a session or a scope is enforced exactly as a POST is. Read \"none\" precisely: it means the route DECLARED that no credential is needed. It is not the same thing as a route an adapter could find no declaration for — \"undeclared\" has no representation in this file, and an adapter must treat a resolver miss as a loud failure (the 500 above) and never as \"none\". Everything about how an adapter binds a requirement to a route — prefix-mounted routers, trailing slashes, case-variant paths, parameterised paths, `app.all` handlers answering OPTIONS — is outside this file's reach and is the adapter's own obligation to test. VERSION 3 (2026-09-25, meta#87) adds cases and changes none: an active answer may leave the `scope` key out, as RFC 7662 allows, and a client reads the absence exactly as `\"scope\":\"\"` — no scopes, never a malformed answer. The center itself always sends the key (auth-service#4), so these cases are a client's obligation only and are not ones the center can produce. VERSION 4 (2026-09-26) adds cases and changes none: `request.authorization` is EITHER a string — one `Authorization` header line, or null for none — OR an array of two or more strings, each element one header line in the order sent, an empty string being an empty line. More than one `Authorization` line, whatever the lines hold, is no credential, and the center is not called. The count comes from the raw header list: never from a value joined with \", \" and then split into parts (Go's `Header.Values` and Tomcat's `getHeaders` keep every line, and joining `Bearer a` with an empty second line invents the token `a,`), and never from a parser that keeps one line and drops the rest (Node's HTTP parser discards duplicate `authorization` lines and keeps the first; only `req.rawHeaders` shows how many arrived). VERSION 5 (2026-09-30, ts-introspection-client#6) adds cases and changes none: a center answer whose JSON carries the same top-level key more than once is a MALFORMED answer, exactly as an unparseable body is, and the client answers `centerUnavailable` (calling service) or lanes `background` (gateway) after one call to the center. Reading it as \"the last value wins\" is what `JSON.parse` does, and it would let the identity depend on the parser: `{\"sub\":\"a\",\"sub\":\"b\"}` is user a to a strict reader and user b to a lenient one. The center marshals a struct and never produces a duplicated key, so this is a client-only obligation, pinned so that the Go, Java and TS clients agree on what malformed means. VERSION 6 (2026-10-03, owner's decision, meta#103) adds cases and changes none. (a) SCOPE SEPARATORS are exactly SPACE U+0020, TAB U+0009, CR U+000D and LF U+000A, matched in runs; leading, trailing and repeated separators yield no empty scope. Every other character — VT U+000B, FF U+000C, U+0085, NO-BREAK SPACE U+00A0, U+2000–U+200A, EM SPACE U+2003, U+2028, U+3000, U+FEFF, any Unicode space — is PART OF the scope token, so `fleet:control` joined to another scope by U+00A0 is one opaque scope that is not `fleet:control`, and the route answers 403. This is what the Go and Java clients already did; the TS client split on `/\\s+/`, which includes every Unicode space and VT and FF, and auth-service's own operator routes on `strings.Fields`, which includes them too. (b) KEY CASE: two top-level keys of a center answer that are equal IGNORING CASE are a duplicate, a malformed answer exactly as version 5's exact repeat is, and so is a contract key (`active`, `sub`, `scope`, `exp`, `kind`) spelled any way but its own, even once. A reader comparing keys exactly and one binding them case-insensitively (Go's encoding/json) would read such a body differently, so neither reading may be taken. The cases pin ASCII case variants only: the clients lower keys with their language's Unicode lowering, which agrees on every ASCII letter but not on every non-ASCII one (Go maps U+0130 to one character, Java and JavaScript to two). Keys below the top level keep version 5's rule — an exact repeat within one object, at any depth, is malformed; a case variant there is not. The center marshals a struct and produces none of these bodies. VERSION 7 (2026-10-05, owner's decision, clerk-client#13) adds cases and changes none: a NON-2XX ANSWER IS UNAVAILABLE WHATEVER ITS BODY SAYS. The center answers 500, 401, 302, 503 or 404 with a body that is a valid active answer for an operator holding the required scope; a calling service answers `centerUnavailable` (503) and st-gateway lanes `background`, after one call. The status is decided before the body is read, and the body of a non-2xx is never parsed for an identity. Before version 7 every non-2xx case carried an error body that no reader takes for an answer, so a client that parsed first and checked the status only when the parse failed passed the whole file. A 3xx is never followed (it would carry the caller secret to the Location's host); the stub sends no Location header, so following a redirect is the client's own obligation to test. The center never sends an active body with a non-2xx, so these are a client's obligation only. The file holds fifty-six calling-service cases and nineteen gateway cases, seventy-five in all.",
+  "version": 7,
   "contract": {
     "endpoint": {
       "method": "POST",
@@ -600,6 +600,71 @@
       }
     },
     {
+      "name": "center-returns-500-with-active-body",
+      "why": "Version 7. The center is broken, and the body that comes with the 500 happens to be a valid active answer for an operator who holds the required scope: a buggy handler that wrote its answer and then failed, or a proxy that stamped its own status on a cached body. A non-2xx is unavailable whatever the body says, so the client must decide on the status before it reads a byte of the body. A client that parses first and checks the status second, or only checks it when the parse fails, proceeds here. 503, one call, the body never consulted.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer non2xx.token.one" },
+      "center": { "status": 500, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}" },
+      "expect": {
+        "outcome": "reject",
+        "status": 503,
+        "message": "the authentication service could not process this request",
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "center-returns-401-with-active-body",
+      "why": "Version 7. The center's 401 is about OUR caller secret, and the body is a valid active answer anyway. The status wins: 503, never proceed and never 401. A client that reads a 401 body, to log why the center refused us, must still never take an identity out of it.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer non2xx.token.two" },
+      "center": { "status": 401, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}" },
+      "expect": {
+        "outcome": "reject",
+        "status": 503,
+        "message": "the authentication service could not process this request",
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "center-returns-302-with-active-body",
+      "why": "Version 7. A redirect is not an answer. The center never redirects, so a 3xx means something between us and it is misconfigured, and following it would carry our caller secret to whatever host a Location header named: every client must leave redirects unfollowed (clerk-client `redirect: \"manual\"`, navigation-service `Redirect.NEVER`). The stub sends no Location header, so a client that follows redirects is not caught by this case; one that treats any response it did not fail on as an answer is. 503, one call.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer non2xx.token.three" },
+      "center": { "status": 302, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}" },
+      "expect": {
+        "outcome": "reject",
+        "status": 503,
+        "message": "the authentication service could not process this request",
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "center-returns-503-with-active-body",
+      "why": "Version 7. The center says it is unavailable and still sends an active body. The client's 503 is its own, never a relay: the fixed `centerUnavailable` sentence whatever the center sent, after exactly one call, so a client that retries on a 503 fails `centerCalls`. With the 500 above it pins the 5xx a client is most likely to special-case.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer non2xx.token.four" },
+      "center": { "status": 503, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}" },
+      "expect": {
+        "outcome": "reject",
+        "status": 503,
+        "message": "the authentication service could not process this request",
+        "centerCalls": 1
+      }
+    },
+    {
+      "name": "center-returns-404-with-active-body",
+      "why": "Version 7. A 4xx that is not 401: a wrong AUTH_INTROSPECTION_URL path, or a router in front of the center answering for a route it does not have, with an active body. Every non-2xx is unavailable, not only the ones a client thought to list. 503, one call.",
+      "route": { "method": "POST", "requires": "fleet:control" },
+      "request": { "authorization": "Bearer non2xx.token.five" },
+      "center": { "status": 404, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}" },
+      "expect": {
+        "outcome": "reject",
+        "status": 503,
+        "message": "the authentication service could not process this request",
+        "centerCalls": 1
+      }
+    },
+    {
       "name": "token-on-public-get-while-center-is-down",
       "why": "The case that decides what fail-closed means for the public surface. A visitor with no header keeps reading (see `visitor-on-public-get`); a caller who DID present a token gets 503, not a silent downgrade to visitor. Downgrading would be a read served under an identity nobody verified, and — worse — an operator would see the anonymous view with no indication that anything was wrong.",
       "route": { "method": "GET", "requires": "none" },
@@ -913,6 +978,41 @@
       "why": "Version 6, the gateway's half of the case-insensitive duplicate rule. `kind` and `Kind` are one key named twice, so the answer is malformed and the lane is background. An exact-comparing reader takes `kind:operator` and grants the interactive lane (st-gateway did, through clerk-client 2.0.0). Every well-formed member comes first, so the center's own answer for this token is this body without `Kind`. One call.",
       "request": { "authorization": "Bearer duplicate.token.three" },
       "center": { "status": 200, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\",\"Kind\":\"machine\"}" },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 1 }
+    },
+    {
+      "name": "gateway-center-returns-500-with-active-body",
+      "why": "Version 7, the gateway's half of `center-returns-500-with-active-body`. A non-2xx is a center that did not answer, whatever its body says, so the lane is background and never the interactive lane the body's `kind:\"operator\"` would grant. Never a 503. One call.",
+      "request": { "authorization": "Bearer non2xx.token.one" },
+      "center": { "status": 500, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}" },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 1 }
+    },
+    {
+      "name": "gateway-center-returns-401-with-active-body",
+      "why": "Version 7, the gateway's half of `center-returns-401-with-active-body`. A 401 about our caller secret with an active operator body: background, not interactive. One call.",
+      "request": { "authorization": "Bearer non2xx.token.two" },
+      "center": { "status": 401, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}" },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 1 }
+    },
+    {
+      "name": "gateway-center-returns-302-with-active-body",
+      "why": "Version 7, the gateway's half of `center-returns-302-with-active-body`. A redirect is not an answer: background, not interactive, and the redirect is not followed. One call.",
+      "request": { "authorization": "Bearer non2xx.token.three" },
+      "center": { "status": 302, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}" },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 1 }
+    },
+    {
+      "name": "gateway-center-returns-503-with-active-body",
+      "why": "Version 7, the gateway's half of `center-returns-503-with-active-body`. The lane is background, not interactive, and the center's 503 is never relayed. One call.",
+      "request": { "authorization": "Bearer non2xx.token.four" },
+      "center": { "status": 503, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}" },
+      "expect": { "outcome": "lane", "lane": "background", "centerCalls": 1 }
+    },
+    {
+      "name": "gateway-center-returns-404-with-active-body",
+      "why": "Version 7, the gateway's half of `center-returns-404-with-active-body`. The lane is background, not interactive. One call.",
+      "request": { "authorization": "Bearer non2xx.token.five" },
+      "center": { "status": 404, "body": "{\"active\":true,\"sub\":\"user_31qP8k2cQeXampleOperator\",\"scope\":\"fleet:control\",\"exp\":4102444800,\"kind\":\"operator\"}" },
       "expect": { "outcome": "lane", "lane": "background", "centerCalls": 1 }
     }
   ]
