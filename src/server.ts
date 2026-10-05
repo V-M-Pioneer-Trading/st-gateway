@@ -334,7 +334,6 @@ export function createApp(config: GatewayConfig) {
 
   // Keep parser failures (payload too large, aborted stream) in the same JSON
   // error envelope as everything else instead of Express's default HTML page.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Express recognises an error handler by its four-parameter arity, so `_next` must stay declared
   app.use((err: Error & { status?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(typeof err.status === "number" ? err.status : 500).json({
       error: { message: err.message || "internal error" },
