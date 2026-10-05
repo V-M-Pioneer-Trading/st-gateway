@@ -61,7 +61,7 @@ describe("createShutdown: order and bound", () => {
     expect(steps()).toEqual(["drain", "close", "stop", "exit 0"]);
   });
 
-  it("gives up at the bound: closes the remaining connections, stops the timers, exits 0", () => {
+  it("gives up at the bound: closes the remaining connections, stops the timers, exits 1", () => {
     const { shutdown, steps, calls } = setup(); // 8 s by default
 
     shutdown("SIGTERM");
