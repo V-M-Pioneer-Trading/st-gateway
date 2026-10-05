@@ -1,26 +1,30 @@
 introspection.json is vendored verbatim. It is not maintained here.
 
   original    V-M-Pioneer-Trading/meta, path fixtures/introspection.json
-  meta commit 993fea9eb1c38de03b9bea14d6e03d8b450750cc
-  blob        ed0f25acfd3a9aaed7a5674a969cac0b25e7cf80
-  vendored    2026-10-03
-  version     6
-  cases       51 calling-service + 14 gateway = 65
-  bytes       69309
-  sha256      90562110d24e47bfdcbf7ff05f1112b4bc840835bf728fa7f6bd81ff67bbeb9c
+  meta commit f226e5f49b59d094a83a07fbb2f3caf3149a8d66
+  blob        f41e25d15cfeb115fb006543da23430a31cad278
+  vendored    2026-10-05
+  version     7
+  cases       56 calling-service + 19 gateway = 75
+  bytes       77984
+  sha256      95cb78d820dd3eb65f93eb91c379fac152924f1fa9b799bf01603c8f162cda2b
 
-The commit above is the head of meta pull request #107, "Fixture v6: what
-separates scopes, and top-level keys ignoring case". That pull request is
-merged with a merge commit, not squashed, so this commit lands on meta's main
+The commit above is the head of meta pull request #108, "Fixture v7: a non-2xx
+answer is unavailable whatever its body says". That pull request is merged
+with a merge commit, not squashed, so this commit lands on meta's main
 unchanged; had it been squashed, the commit above would be replaced with the
-squash commit, and the blob, bytes and sha256 would not change. Version 6 adds
-ten calling-service cases and one gateway case,
-gateway-center-returns-case-variant-duplicate-key: `kind` and `Kind` in one
-answer are one key named twice, so the lane is background. clerk-client 2.0.0
-compared keys exactly and laned it interactive; 2.0.1 is the first release
-that passes it, which is why this copy and the 2.0.1 bump land together.
+squash commit, and the blob, bytes and sha256 would not change. Version 7 adds
+five calling-service cases and five gateway cases,
+gateway-center-returns-{500,401,302,503,404}-with-active-body: the center
+answers a non-2xx with a valid active operator body, and the lane is
+background, never interactive. clerk-client refuses any non-2xx before reading
+the body (since 1.0.0), so no bump is needed; the cases pin it.
 
-st-gateway drives the fourteen gatewayCases only. The fifty-one calling-service
+Version 6 (meta #107, commit 993fea9) added
+gateway-center-returns-case-variant-duplicate-key; clerk-client 2.0.1 is the
+first release that passes it.
+
+st-gateway drives the nineteen gatewayCases only. The fifty-six calling-service
 cases describe a verdict (proceed, 401, 403, 503), and the gateway never
 reaches one: it picks a queue lane and nothing else. Those cases are driven by
 clerk-client's own suite, which vendors the same version. The
