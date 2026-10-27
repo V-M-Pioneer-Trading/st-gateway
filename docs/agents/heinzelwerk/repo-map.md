@@ -11,7 +11,7 @@ The single door to SpaceTraders: one global rate budget (token bucket, `RATE_LIM
 | `src/shutdown.ts` | SIGTERM / SIGINT |
 | `src/__tests__/fixtures/introspection.json` + `SOURCE.txt` | vendored meta fixture, sha256 checked by `lane.conformance.test.ts` |
 
-- Calls: SpaceTraders (`SPACETRADERS_BASE_URL`), auth-service `GET /auth/v1/token` and introspect (lane only; 450 ms ceiling).
+- Calls: SpaceTraders (`SPACETRADERS_BASE_URL`), auth-service `GET /auth/v1/token` and introspect (lane only; `LANE_TIMEOUT_MS` 250).
 - Called by: agent-service, fleet-service, navigation-service, auth-service (polls `GET /`).
 - Port 3002. Refuses to start without `AUTH_INTROSPECTION_URL`, `AUTH_INTROSPECTION_SECRET`, `AUTH_SERVICE_SHARED_SECRET`.
 - Dockerfile copies both `tsconfig.json` and `tsconfig.build.json`.
