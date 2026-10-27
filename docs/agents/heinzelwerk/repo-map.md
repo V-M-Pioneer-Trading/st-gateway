@@ -16,3 +16,8 @@ The single door to SpaceTraders: one global rate budget (token bucket, `RATE_LIM
 - Port 3002. Refuses to start without `AUTH_INTROSPECTION_URL`, `AUTH_INTROSPECTION_SECRET`, `AUTH_SERVICE_SHARED_SECRET`.
 - Dockerfile copies both `tsconfig.json` and `tsconfig.build.json`.
 - CI `container.yml`: `test` (typecheck, lint, test), `docker` (main: deploys through agent-service's SSM document). No openapi.json.
+
+## Reference docs
+
+- `README.md` "Credential policy", "Lanes": read when adding a path exception or changing lane derivation.
+- `README.md` "Errors the gateway generates itself", "Retry policy", "Configuration": read when adding an error, touching retries, or adding a config value.
