@@ -22,5 +22,6 @@ How heinzelwerk agents work in this repo. Mode rules (single repo vs workspace) 
   - Provided: `/proxy/*` to agent-service, auth-service, fleet-service, navigation-service (each `ST_GATEWAY_URL` + /proxy)
   - Consumed: auth-service `GET /auth/v1/token` with `X-Auth-Service-Secret` (`src/authServiceClient.ts`) · provider auth-service; clerk-client `createLaneDeriver` · provider clerk-client
   - Vendored: `src/__tests__/fixtures/introspection.json`, copy of `../meta/fixtures/introspection.json`, pinned in `src/__tests__/fixtures/SOURCE.txt` · provider meta
+    - Re-vendor: change meta first, then `git -C ../meta show HEAD:fixtures/introspection.json > src/__tests__/fixtures/introspection.json`, recompute bytes and sha256 of the copy, update the record in `SOURCE.txt` and the constants `FIXTURE_SHA256`/`FIXTURE_BYTES` in `src/__tests__/lane.conformance.test.ts:30-31` (`src/__tests__/fixtures/SOURCE.txt:41-47`).
   - Shared packages: clerk-client 2.0.1 (`package.json:18`), eslint-config 1.1.0 (`package.json:26`)
   - Infra outputs: st-gateway container in the agent-service stack · provider infrastructure (`../V-M-Pioneer-Trading_infrastructure/agent-service/main.tf`)

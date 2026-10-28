@@ -6,6 +6,8 @@ entire point. A second consequence follows from it: because every call passes
 through here anyway, this is also the only place that needs to hold the
 SpaceTraders agent token — callers no longer carry it.
 
+Correction (2026-10-29): not every call: spacetraders-mcp-server calls api.spacetraders.io directly with its own token, see ../spacetraders-mcp-server/src/config.ts:4,8 and ../spacetraders-mcp-server/src/spacetraders-api.ts:50.
+
 Three things live here and nowhere else:
 
 1. **One global rate budget.** A single token bucket paces every outbound call,
