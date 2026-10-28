@@ -37,3 +37,7 @@ Facts verified against origin/main c35e565 on 2026-10-27, each with `path:line`.
 - CI deploys only main's tip; stale runs skip with warning; recover via workflow_dispatch on main (container.yml:33-38,105-127). PRs run only job test (container.yml:75).
 - Missing AUTH_INTROSPECTION_* = crash loop, every game call 502s at its caller; bootstrap does not health-check st-gateway (CLAUDE.md:139-141; container.yml:177-184).
 11. EXISTING DOCS: README.md (306 lines: architecture/request mermaid, credential + retry policy, lanes, endpoints, errors, config, limitations; README.md:31,87,97,143,189,202,219,273). CLAUDE.md (274 lines: commands, module map, dependency rules, 12 invariants, critical sequences, testing; CLAUDE.md:6,32,42,61,114,185). src/__tests__/fixtures/SOURCE.txt: provenance of introspection.json (CLAUDE.md:207-210).
+
+## Reference docs
+
+- `README.md` Retry policy and Lanes tables: read when changing retries or lanes.
