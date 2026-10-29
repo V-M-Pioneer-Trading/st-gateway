@@ -78,3 +78,8 @@ Verified against c35e565 2026-10-29.
 - Deploy rides agent-service's SSM document and restarts its MySQL. `.github/workflows/container.yml:168-171`
 - CI comment says st-gateway is unchecked (`:177-178`), but the bootstrap now polls `/health` 30x3 s and fails the command. `../V-M-Pioneer-Trading_infrastructure/agent-service/main.tf:315-330`
 - New required env must land in infrastructure first. `.github/workflows/container.yml:179-184`
+
+## Reference docs
+- `./README.md` "Lanes": read when changing lane derivation or center answers.
+- `./README.md` "Errors the gateway generates itself": read when debugging a 502/503/413 from the gateway.
+- `src/__tests__/fixtures/SOURCE.txt`: read when meta/fixtures/introspection.json changes (re-vendor) or when bumping clerk-client or the fixture version (history).
