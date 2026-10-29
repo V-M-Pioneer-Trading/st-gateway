@@ -298,7 +298,7 @@ Deliberate, not accidental:
 - **Caller request headers other than `Content-Type` are dropped**, and only the
   pacing headers come back. This is a game-API proxy, not a general one.
 
-  Correction (2026-10-29): only Content-Type is forwarded, plus the caller's `Authorization` on POST `/register`, see st-gateway/src/server.ts:242-244.
+  Correction (2026-10-29): only Content-Type is forwarded, plus the caller's `Authorization` on POST `/register`, see src/server.ts:215,242-244.
 - **Response bodies are relayed as text.** SpaceTraders is JSON-only; a binary
   upstream body would be mangled.
 - **No circuit breaker.** A sustained SpaceTraders outage still queues and

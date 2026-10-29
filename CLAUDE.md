@@ -39,6 +39,8 @@ file list *from the Dockerfile's own COPY lines*; copying what the build
 | `src/authServiceClient.ts` | agent-token fetch, cache, in-flight dedupe, `TokenResult` | *(none)* |
 | `src/testSupport/*` | the three fakes (SpaceTraders, auth-service's vault, auth-service's introspection endpoint), `sendThrough()` for raw header lines, `useHarness()` | `server`, `config` |
 
+Correction (2026-10-29): `src/server.ts` also imports `src/shutdown.ts`, see `src/server.ts:38`; `src/shutdown.ts` has no row in this table.
+
 ### Dependency rules
 
 - `config.ts`, `tokenBucket.ts` and `authServiceClient.ts` are **leaves**. They
@@ -53,6 +55,7 @@ file list *from the Dockerfile's own COPY lines*; copying what the build
   `server.ts` (the deriver) and `config.ts` (the env loader).
 - `server.ts` is the only module that knows Express exists. Nothing else may
   import `express` or touch `req`/`res`.
+  - Correction (2026-10-29): `src/testSupport/rawHttp.ts` imports from `express` too (type-only), see `src/testSupport/rawHttp.ts:13`.
 - Nothing under `src/` outside `src/testSupport/` may import from
   `src/testSupport/` or `src/__tests__/`.
 - The graph is a tree rooted at `server.ts`. There are no cycles; there is no
@@ -82,6 +85,7 @@ Each of these is stated so you can recognise a violation in a diff.
    `createApp`'s `app.use("/proxy", …)` is load-bearing: Express 4 ignores
    rejections from async handlers, so an unguarded throw leaves the caller's
    socket open forever. Any new `await` belongs inside `proxy()`.
+   - Correction (2026-10-29): the `/proxy` handler and its `try` are in `createGateway`, see `src/server.ts:331-333`; `createApp` is a one-line wrapper, see `src/server.ts:363`.
 5. **A forced refresh that fails clears the cache.** Keeping a credential
    SpaceTraders has just rejected turns one 401 into an outage lasting
    `AUTH_SERVICE_TOKEN_CACHE_MS`.
@@ -123,6 +127,7 @@ Each of these is stated so you can recognise a violation in a diff.
 3. Resolve credential mode; on `inject` with no credential, answer 503 **and
    return**. This happens *before* any `acquire()`, so an unconfigured gateway
    never drains the budget.
+   - Correction (2026-10-29): the credential mode is resolved before the lane, see `src/server.ts:217` (mode) and `src/server.ts:239-240` (lane, skipped on `forward`); only the token fetch and its 503 come after the lane, see `src/server.ts:246-248`.
 4. Per attempt: connected? → `acquire()` → connected again? → `fetch` →
    classify → refresh-and-retry, back-off-and-retry, or relay.
 

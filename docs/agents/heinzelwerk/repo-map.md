@@ -3,19 +3,19 @@ Verified against c35e565 2026-10-29.
 
 ## Purpose
 - Global SpaceTraders gateway: one token-bucket budget, injected agent token, central retry, identity-derived queue lane; never authorizes callers. `package.json:4`, `src/server.ts:1-25`
-- Single instance only (SpaceTraders limits per account). `CLAUDE.md:168-169`
+- Single instance only (SpaceTraders limits per account). `CLAUDE.md:173-174`
 - Node >=24. `package.json:7`
 
 ## Layout
 - `src/server.ts`: only module importing express; lane, `/proxy` handler, retry loop, credential mode.
 - Leaves, import nothing local: `src/config.ts`, `src/tokenBucket.ts`, `src/authServiceClient.ts`. `CLAUDE.md:34-40`, `:44-55`
 - `src/shutdown.ts`: drain bound. Test fakes: `src/testSupport/`.
-- `configFromEnv` and the `require*()` helpers are the only env readers. `src/config.ts:43-83`, `CLAUDE.md:98-100`
-- Docs: `README.md`, `CLAUDE.md`, `src/__tests__/fixtures/SOURCE.txt`; refs `../meta/docs/operations.md` (`.github/workflows/container.yml:169`), `token-introspection.md` (`src/server.ts:10`), auth-design decisions 2/5/21 (`src/server.ts:16`); no `docs/` dir (verified 2026-10-29 @ c35e565: ls).
+- `configFromEnv` and the `require*()` helpers are the only env readers. `src/config.ts:43-83`, `CLAUDE.md:102-104`
+- Docs: `README.md`, `CLAUDE.md`, `src/__tests__/fixtures/SOURCE.txt`; refs `../meta/docs/operations.md` (`.github/workflows/container.yml:169`), `token-introspection.md` (`src/server.ts:10`), auth-design decisions 2/5/21 (`src/server.ts:16`); no docs outside `docs/agents/` (verified 2026-10-29 @ c35e565: `git ls-tree -r --name-only origin/main | grep '^docs/'` → no output).
 
 ## Entry points and lanes
 - GET `/health`, GET `/api/st-gateway/health` return `{status:"ok"}`; GET `/metrics` returns `{queues:{interactive,background}}`; all unauthenticated. `src/server.ts:201-209`, `README.md:294-297`
-- ANY method `/proxy/<st-path>`: raw body, 5mb (413 above), never parsed; only Content-Type forwarded; `X-Priority` ignored. `src/server.ts:331`, `:213-215`, `:232`
+- ANY method `/proxy/<st-path>`: raw body, 5mb (413 above), never parsed; `X-Priority` ignored. `src/server.ts:331`, `:213-215`, `:232`
 - Credential mode from method + `req.path`: GET `/` none; POST `/register` forwards caller Authorization verbatim; else inject agent token (503 if auth-service cannot supply). `src/server.ts:150-154`, `:242-252`
 - Lane: `interactive` only for an active `kind=operator`; everything else (machine, none, malformed, two Authorization lines, `/register`, center down) is `background`; derived once per request, 250 ms, never rejects. `src/server.ts:62`, `:113-116`, `:239-240`
 - Bucket: `RATE_LIMIT_RPS` 2, `RATE_LIMIT_BURST` 1; two FIFO queues, interactive first. `src/config.ts:76-77`, `src/tokenBucket.ts:22-31`
@@ -31,7 +31,7 @@ Verified against c35e565 2026-10-29.
 - No spend/read distinction: every injected non-GET may spend ("purchases, sells"). `src/server.ts:219-223`
 - POST 5xx/network is never retried (at-most-once); 429 and 401 are. `src/server.ts:283-286`
 - `AUTH_SERVICE_SHARED_SECRET` unlocks the agent token that spends the whole account; must differ from the introspection secret. `src/config.ts:112-126`; only st-gateway and auth-service receive it. `../V-M-Pioneer-Trading_infrastructure/auth-service/main.tf:365-366`
-- No paid external API in `src/` Checked by grep only (unverified).
+- No paid external API in `src/` (verified 2026-10-29 @ c35e565: `grep -rnE 'fetch\(' src --include=*.ts --exclude-dir=__tests__ --exclude-dir=testSupport` → `src/authServiceClient.ts:69` and `src/server.ts:266` only, the vault and the SpaceTraders proxy).
 
 ## Calls and called-by
 - Out: SpaceTraders at `SPACETRADERS_BASE_URL` (default `https://api.spacetraders.io/v2`). `src/config.ts:75`
@@ -63,16 +63,16 @@ Verified against c35e565 2026-10-29.
 ## Patterns
 - `{error:{message}}` envelope. `src/server.ts:248`, `:324-326`, `:350-353`
 - Test fakes and `useHarness()`; `gw.app({maxRetries:0})`. `CLAUDE.md:40`, `:196-205`
-- Recipes for extending. `CLAUDE.md:248-268`
-- Regression test comment states the old behaviour. `CLAUDE.md:241-243`
+- Recipes for extending. `CLAUDE.md:253-273`
+- Regression test comment states the old behaviour. `CLAUDE.md:246-248`
 - Lint: shared `base`; eslint ^10.12.0 `package.json:27`, typescript-eslint ^8.71.0 `package.json:32`; `meta#105` `.github/workflows/container.yml:67`.
 
 ## Traps
 - Dockerfile COPY must list both tsconfigs (TS5058). `Dockerfile:5`, `CLAUDE.md:23-30`
-- Mode and lane use `req.path`, not `req.url`; lane input is `soleAuthorizationLine(req)`. `src/server.ts:212`, `:217`, `:240`, `CLAUDE.md:68-71`
+- Mode and lane use `req.path`, not `req.url`; lane input is `soleAuthorizationLine(req)`. `src/server.ts:212`, `:217`, `:240`, `CLAUDE.md:71-74`
 - Body consumed once. `src/server.ts:300`, `:305`, `:312`
 - `SHUTDOWN_TIMEOUT_MS` 8000 below deploy's `docker stop -t 9`. `src/shutdown.ts:15-25`, `../V-M-Pioneer-Trading_infrastructure/agent-service/main.tf:273`
-- Hanging-center test ceiling 450 ms, never past 500. `CLAUDE.md:225-231`
+- Hanging-center test ceiling 450 ms, never past 500. `CLAUDE.md:230-236`
 - `CLERK_*` env ignored. `src/config.ts:100-105`
 - Aborted callers' tokens are not reclaimed. `README.md:292-293`
 - Deploy rides agent-service's SSM document and restarts its MySQL. `.github/workflows/container.yml:168-171`
