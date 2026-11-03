@@ -62,11 +62,11 @@ see [Known limitations](#known-limitations).
 
 ```mermaid
 flowchart TD
-  A["ANY /proxy/{spacetraders-path}"] --> B["pick a lane: ask auth-service about the caller's token<br/>at most 250 ms, never rejects"]
-  B --> C{"credential mode<br/>from method + path"}
-  C -- "GET /" --> D["send no Authorization"]
-  C -- "POST /register" --> E["forward the caller's Authorization"]
-  C -- "anything else" --> F["get the agent token"]
+  A["ANY /proxy/{spacetraders-path}"] --> C{"credential mode<br/>from method + path"}
+  C -- "POST /register" --> E["forward the caller's Authorization<br/>background lane, auth-service never asked"]
+  C -- "GET /, or anything else" --> B["pick a lane: ask auth-service about the caller's token<br/>at most 250 ms, never rejects"]
+  B -- "GET /" --> D["send no Authorization"]
+  B -- "anything else" --> F["get the agent token"]
   F -- "none available" --> G["503"]
   F -- "token" --> H["inject the agent token"]
   D --> Q
