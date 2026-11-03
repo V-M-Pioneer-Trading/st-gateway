@@ -33,13 +33,12 @@ file list *from the Dockerfile's own COPY lines*; copying what the build
 
 | File | Owns | Imports from this repo |
 |---|---|---|
-| `src/server.ts` | Express wiring, the lane decision, the `/proxy` handler, the retry loop, credential mode, response relay, the startup block | `config`, `tokenBucket`, `authServiceClient` |
+| `src/server.ts` | Express wiring, the lane decision, the `/proxy` handler, the retry loop, credential mode, response relay, the startup block | `config`, `tokenBucket`, `authServiceClient`, `shutdown` |
 | `src/config.ts` | `GatewayConfig`, env parsing, all startup validation (the introspection variables through the shared client's `loadIntrospectionConfig`) | *(none)* |
 | `src/tokenBucket.ts` | the global budget, the two priority queues, queue metrics, and the `Priority` union | *(none)* |
 | `src/authServiceClient.ts` | agent-token fetch, cache, in-flight dedupe, `TokenResult` | *(none)* |
+| `src/shutdown.ts` | graceful shutdown on SIGTERM/SIGINT: drain, close, the 8 s bound | *(none)* |
 | `src/testSupport/*` | the three fakes (SpaceTraders, auth-service's vault, auth-service's introspection endpoint), `sendThrough()` for raw header lines, `useHarness()` | `server`, `config` |
-
-Correction (2026-10-29): `src/server.ts` also imports `src/shutdown.ts`, see `src/server.ts:38`; `src/shutdown.ts` has no row in this table.
 
 ### Dependency rules
 
@@ -53,9 +52,9 @@ Correction (2026-10-29): `src/server.ts` also imports `src/shutdown.ts`, see `sr
   21 auth-service is the one place Clerk's conventions are known. The
   `@v-m-pioneer-trading/clerk-client` import is confined to
   `server.ts` (the deriver) and `config.ts` (the env loader).
-- `server.ts` is the only module that knows Express exists. Nothing else may
+- `server.ts` is the only module that knows Express exists, apart from the
+  type-only `Express` import in `src/testSupport/rawHttp.ts`. Nothing else may
   import `express` or touch `req`/`res`.
-  - Correction (2026-10-29): `src/testSupport/rawHttp.ts` imports from `express` too (type-only), see `src/testSupport/rawHttp.ts:13`.
 - Nothing under `src/` outside `src/testSupport/` may import from
   `src/testSupport/` or `src/__tests__/`.
 - The graph is a tree rooted at `server.ts`. There are no cycles; there is no
@@ -82,10 +81,9 @@ Each of these is stated so you can recognise a violation in a diff.
    every request. An early `return` next to a `Response` you did not read is
    the shape to look for.
 4. **Nothing in the `/proxy` handler may throw past `proxy()`.** The `try` in
-   `createApp`'s `app.use("/proxy", …)` is load-bearing: Express 4 ignores
+   `createGateway`'s `app.use("/proxy", …)` is load-bearing: Express 4 ignores
    rejections from async handlers, so an unguarded throw leaves the caller's
    socket open forever. Any new `await` belongs inside `proxy()`.
-   - Correction (2026-10-29): the `/proxy` handler and its `try` are in `createGateway`, see `src/server.ts:331-333`; `createApp` is a one-line wrapper, see `src/server.ts:363`.
 5. **A forced refresh that fails clears the cache.** Keeping a credential
    SpaceTraders has just rejected turns one 401 into an outage lasting
    `AUTH_SERVICE_TOKEN_CACHE_MS`.
@@ -121,13 +119,13 @@ Each of these is stated so you can recognise a violation in a diff.
 
 1. `express.raw` buffers the body (never parsed — payloads are forwarded byte
    for byte).
-2. Derive the lane: one call to auth-service's introspection endpoint for a
-   single well-formed bearer line, none otherwise, bounded by 250 ms. Must
+2. Resolve credential mode, then derive the lane: one call to auth-service's
+   introspection endpoint for a single well-formed bearer line (never on
+   `forward`), none otherwise, bounded by 250 ms. Must
    precede step 4: `acquire()` needs the class.
-3. Resolve credential mode; on `inject` with no credential, answer 503 **and
+3. On `inject` with no credential, answer 503 **and
    return**. This happens *before* any `acquire()`, so an unconfigured gateway
    never drains the budget.
-   - Correction (2026-10-29): the credential mode is resolved before the lane, see `src/server.ts:217` (mode) and `src/server.ts:239-240` (lane, skipped on `forward`); only the token fetch and its 503 come after the lane, see `src/server.ts:246-248`.
 4. Per attempt: connected? → `acquire()` → connected again? → `fetch` →
    classify → refresh-and-retry, back-off-and-retry, or relay.
 
@@ -288,3 +286,4 @@ because it is trusted.
 - **Out of scope**: see `../meta/docs/agents/heinzelwerk/out-of-scope.md` before proposing or triaging discovered work.
 - **Repo map**: see `docs/agents/heinzelwerk/repo-map.md` when locating code.
 - **Learnings**: read `../meta/docs/agents/heinzelwerk/learnings.md` before starting any task.
+- **Sibling paths** (workspace mode only): `../<repo>/…` above is relative to this repo's main checkout, i.e. the workspace folder. From a task worktree (`.claude/worktrees/<x>`), resolve it as `$(cd "$(git rev-parse --git-common-dir)/../.." && pwd)/<repo>/…`.

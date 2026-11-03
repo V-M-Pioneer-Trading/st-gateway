@@ -295,10 +295,9 @@ Deliberate, not accidental:
   the process and never reset, so `avg` dilutes a bad minute forever; there are
   no percentiles and no Prometheus exposition format. `/health` and `/metrics`
   are open.
-- **Caller request headers other than `Content-Type` are dropped**, and only the
+- **Caller request headers other than `Content-Type` are dropped**
+  (`POST /register` also forwards the caller's `Authorization`), and only the
   pacing headers come back. This is a game-API proxy, not a general one.
-
-  Correction (2026-10-29): only Content-Type is forwarded, plus the caller's `Authorization` on POST `/register`, see src/server.ts:215,242-244.
 - **Response bodies are relayed as text.** SpaceTraders is JSON-only; a binary
   upstream body would be mangled.
 - **No circuit breaker.** A sustained SpaceTraders outage still queues and

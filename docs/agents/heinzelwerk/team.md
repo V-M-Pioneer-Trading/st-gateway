@@ -9,18 +9,18 @@ How heinzelwerk agents work in this repo. Mode rules (single repo vs workspace) 
   - `npm run typecheck`
   - `npm run lint`
   - `npm test`
-  - `npm audit --audit-level=high (red on main: V-M-Pioneer-Trading/meta#136; not in CI)`
-  - `docker buildx build --platform linux/arm64 . (unverified locally: docker daemon not running)`
+  - `npm audit --audit-level=high` (red on main: V-M-Pioneer-Trading/meta#136; not in CI)
+  - `docker buildx build --platform linux/arm64 .` (unverified locally: docker daemon not running)
 - **Verified against**: c35e565 2026-10-29 (checks and every ref in this file; retro bumps it)
 - **Coding standards**: `eslint.config.mjs:1` (shared `base` from `@v-m-pioneer-trading/eslint-config`, `package.json:26`), `eslint . --max-warnings 0` (`package.json:15`); disables carry `-- <reason>` (`src/server.ts:299`, `:330`); `CLAUDE.md` "## Invariants" (:64) and "### Dependency rules" (:44)
 - **Risk areas** (validator reviews diffs touching these on Opus):
   - `ANY /proxy/<path>` in `src/server.ts:331`: unauthenticated, spends credits on the whole SpaceTraders account; no route checks auth (`src/server.ts:5-13`)
-  - `src/server.ts:150-154` `credentialModeFor`: decides inject / forward / none from `req.path`, never `req.url` (`CLAUDE.md:71-74`); a wrong branch sends the agent token or the account token to the wrong place
+  - `src/server.ts:150-154` `credentialModeFor`: decides inject / forward / none from `req.path`, never `req.url` (`CLAUDE.md:70-73`); a wrong branch sends the agent token or the account token to the wrong place
   - `src/server.ts:219-223`, `:282-302`: retry rules; POST 5xx/network is never retried (at-most-once for purchases and sells); 429 and a changed-token 401 are
   - `src/authServiceClient.ts:44-69`, `src/config.ts:107-133`: vault fetch with `AUTH_SERVICE_SHARED_SECRET`; the agent token spends the whole account; the secret must differ from `AUTH_INTROSPECTION_SECRET`
-  - `src/server.ts:239-240`, `src/config.ts:35-40`: lane derivation; never rejects a request, never decides authorization (`CLAUDE.md:94-99`)
+  - `src/server.ts:239-240`, `src/config.ts:35-40`: lane derivation; never rejects a request, never decides authorization (`CLAUDE.md:92-97`)
   - `src/tokenBucket.ts:22-31`, `src/config.ts:76-77`: the single global rate budget; every upstream `fetch` must follow `bucket.acquire()`
-  - `/metrics` shape and the `Priority` union in `src/tokenBucket.ts`: public wire format (`CLAUDE.md:159`)
+  - `/metrics` shape and the `Priority` union in `src/tokenBucket.ts`: public wire format (`CLAUDE.md:157`)
   - `src/shutdown.ts:15-25`: `SHUTDOWN_TIMEOUT_MS` 8000 must stay below the deploy's `docker stop -t 9` (`../V-M-Pioneer-Trading_infrastructure/agent-service/main.tf:273`)
   - `.github/workflows/container.yml:73-223`: a merge to `main` deploys to production; deploy rides agent-service's SSM document `agent-service-bootstrap-i-011b6b82a9072a385` and restarts agent-service's MySQL (`:168-171`)
   - `.github/workflows/container.yml:48` job `test`: required check, never rename (verified 2026-10-29 @ c35e565: `gh api …/branches/main/protection/required_status_checks` → ["test"])

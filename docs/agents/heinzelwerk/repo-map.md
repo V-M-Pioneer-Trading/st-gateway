@@ -3,14 +3,14 @@ Verified against c35e565 2026-10-29.
 
 ## Purpose
 - Global SpaceTraders gateway: one token-bucket budget, injected agent token, central retry, identity-derived queue lane; never authorizes callers. `package.json:4`, `src/server.ts:1-25`
-- Single instance only (SpaceTraders limits per account). `CLAUDE.md:173-174`
+- Single instance only (SpaceTraders limits per account). `CLAUDE.md:171-172`
 - Node >=24. `package.json:7`
 
 ## Layout
 - `src/server.ts`: only module importing express; lane, `/proxy` handler, retry loop, credential mode.
-- Leaves, import nothing local: `src/config.ts`, `src/tokenBucket.ts`, `src/authServiceClient.ts`. `CLAUDE.md:34-40`, `:44-55`
+- Leaves, import nothing local: `src/config.ts`, `src/tokenBucket.ts`, `src/authServiceClient.ts`. `CLAUDE.md:34-41`, `:44-55`
 - `src/shutdown.ts`: drain bound. Test fakes: `src/testSupport/`.
-- `configFromEnv` and the `require*()` helpers are the only env readers. `src/config.ts:43-83`, `CLAUDE.md:102-104`
+- `configFromEnv` and the `require*()` helpers are the only env readers. `src/config.ts:43-83`, `CLAUDE.md:100-102`
 - Docs: `README.md`, `CLAUDE.md`, `src/__tests__/fixtures/SOURCE.txt`; refs `../meta/docs/operations.md` (`.github/workflows/container.yml:169`), `token-introspection.md` (`src/server.ts:10`), auth-design decisions 2/5/21 (`src/server.ts:16`); no docs outside `docs/agents/` (verified 2026-10-29 @ c35e565: `git ls-tree -r --name-only origin/main | grep '^docs/'` → no output).
 
 ## Entry points and lanes
@@ -62,17 +62,17 @@ Verified against c35e565 2026-10-29.
 
 ## Patterns
 - `{error:{message}}` envelope. `src/server.ts:248`, `:324-326`, `:350-353`
-- Test fakes and `useHarness()`; `gw.app({maxRetries:0})`. `CLAUDE.md:40`, `:196-205`
-- Recipes for extending. `CLAUDE.md:253-273`
-- Regression test comment states the old behaviour. `CLAUDE.md:246-248`
+- Test fakes and `useHarness()`; `gw.app({maxRetries:0})`. `CLAUDE.md:41`, `:196-205`
+- Recipes for extending. `CLAUDE.md:251-271`
+- Regression test comment states the old behaviour. `CLAUDE.md:244-246`
 - Lint: shared `base`; eslint ^10.12.0 `package.json:27`, typescript-eslint ^8.71.0 `package.json:32`; `meta#105` `.github/workflows/container.yml:67`.
 
 ## Traps
 - Dockerfile COPY must list both tsconfigs (TS5058). `Dockerfile:5`, `CLAUDE.md:23-30`
-- Mode and lane use `req.path`, not `req.url`; lane input is `soleAuthorizationLine(req)`. `src/server.ts:212`, `:217`, `:240`, `CLAUDE.md:71-74`
+- Mode and lane use `req.path`, not `req.url`; lane input is `soleAuthorizationLine(req)`. `src/server.ts:212`, `:217`, `:240`, `CLAUDE.md:70-73`
 - Body consumed once. `src/server.ts:300`, `:305`, `:312`
 - `SHUTDOWN_TIMEOUT_MS` 8000 below deploy's `docker stop -t 9`. `src/shutdown.ts:15-25`, `../V-M-Pioneer-Trading_infrastructure/agent-service/main.tf:273`
-- Hanging-center test ceiling 450 ms, never past 500. `CLAUDE.md:230-236`
+- Hanging-center test ceiling 450 ms, never past 500. `CLAUDE.md:228-234`
 - `CLERK_*` env ignored. `src/config.ts:100-105`
 - Aborted callers' tokens are not reclaimed. `README.md:292-293`
 - Deploy rides agent-service's SSM document and restarts its MySQL. `.github/workflows/container.yml:168-171`
