@@ -7,8 +7,8 @@ Verified against c35e565 2026-10-29.
 - Node >=24. `package.json:7`
 
 ## Layout
-- `src/server.ts`: only module importing express; lane, `/proxy` handler, retry loop, credential mode.
-- Leaves, import nothing local: `src/config.ts`, `src/tokenBucket.ts`, `src/authServiceClient.ts`. `CLAUDE.md:34-41`, `:44-55`
+- `src/server.ts`: only runtime importer of express (type-only import in `src/testSupport/rawHttp.ts:13`); lane, `/proxy` handler, retry loop, credential mode.
+- Leaves, import nothing local: `src/config.ts`, `src/tokenBucket.ts`, `src/authServiceClient.ts`. `CLAUDE.md:34-41`, `:43-54`
 - `src/shutdown.ts`: drain bound. Test fakes: `src/testSupport/`.
 - `configFromEnv` and the `require*()` helpers are the only env readers. `src/config.ts:43-83`, `CLAUDE.md:100-102`
 - Docs: `README.md`, `CLAUDE.md`, `src/__tests__/fixtures/SOURCE.txt`; refs `../meta/docs/operations.md` (`.github/workflows/container.yml:169`), `token-introspection.md` (`src/server.ts:10`), auth-design decisions 2/5/21 (`src/server.ts:16`); no docs outside `docs/agents/` (verified 2026-10-29 @ c35e565: `git ls-tree -r --name-only origin/main | grep '^docs/'` → no output).
@@ -62,7 +62,7 @@ Verified against c35e565 2026-10-29.
 
 ## Patterns
 - `{error:{message}}` envelope. `src/server.ts:248`, `:324-326`, `:350-353`
-- Test fakes and `useHarness()`; `gw.app({maxRetries:0})`. `CLAUDE.md:41`, `:196-205`
+- Test fakes and `useHarness()`; `gw.app({maxRetries:0})`. `CLAUDE.md:41`, `:194-203`
 - Recipes for extending. `CLAUDE.md:251-271`
 - Regression test comment states the old behaviour. `CLAUDE.md:244-246`
 - Lint: shared `base`; eslint ^10.12.0 `package.json:27`, typescript-eslint ^8.71.0 `package.json:32`; `meta#105` `.github/workflows/container.yml:67`.

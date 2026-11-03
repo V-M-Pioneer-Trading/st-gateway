@@ -5,14 +5,14 @@ How heinzelwerk agents work in this repo. Mode rules (single repo vs workspace) 
 - **Autonomy**: full. Agents merge and apply on their own; breakages are learnings. Secrets are never published (name the variable, never the value); the gate never merges its own policy.
 - **Backend paths**: whole repo (`src/`, `Dockerfile`, `.github/`)
 - **Worktree setup** (run once in every new task worktree): `npm ci`
-- **Checks** (validator runs every one, in order; copied from CI, quiet flags only):
+- **Checks** (validator runs every one, in order; copied from CI, quiet flags only; a status note goes after the closing backtick, never inside the span, which must run as pasted):
   - `npm run typecheck`
   - `npm run lint`
   - `npm test`
   - `npm audit --audit-level=high` (red on main: V-M-Pioneer-Trading/meta#136; not in CI)
   - `docker buildx build --platform linux/arm64 .` (unverified locally: docker daemon not running)
 - **Verified against**: c35e565 2026-10-29 (checks and every ref in this file; retro bumps it)
-- **Coding standards**: `eslint.config.mjs:1` (shared `base` from `@v-m-pioneer-trading/eslint-config`, `package.json:26`), `eslint . --max-warnings 0` (`package.json:15`); disables carry `-- <reason>` (`src/server.ts:299`, `:330`); `CLAUDE.md` "## Invariants" (:64) and "### Dependency rules" (:44)
+- **Coding standards**: `eslint.config.mjs:1` (shared `base` from `@v-m-pioneer-trading/eslint-config`, `package.json:26`), `eslint . --max-warnings 0` (`package.json:15`); disables carry `-- <reason>` (`src/server.ts:299`, `:330`); `CLAUDE.md` "## Invariants" (:63) and "### Dependency rules" (:43)
 - **Risk areas** (validator reviews diffs touching these on Opus):
   - `ANY /proxy/<path>` in `src/server.ts:331`: unauthenticated, spends credits on the whole SpaceTraders account; no route checks auth (`src/server.ts:5-13`)
   - `src/server.ts:150-154` `credentialModeFor`: decides inject / forward / none from `req.path`, never `req.url` (`CLAUDE.md:70-73`); a wrong branch sends the agent token or the account token to the wrong place
