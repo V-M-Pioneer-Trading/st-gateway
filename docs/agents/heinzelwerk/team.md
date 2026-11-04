@@ -9,7 +9,7 @@ How heinzelwerk agents work in this repo. Mode rules (single repo vs workspace) 
   - `npm run typecheck`
   - `npm run lint`
   - `npm test`
-  - `npm audit --audit-level=high` (red on main: V-M-Pioneer-Trading/meta#136; not in CI)
+  - `npm audit --audit-level=high` (not in CI)
   - `docker buildx build --platform linux/arm64 .` (unverified locally: docker daemon not running)
 - **Verified against**: c35e565 2026-10-29 (checks and every ref in this file; retro bumps it)
 - **Coding standards**: `eslint.config.mjs:1` (shared `base` from `@v-m-pioneer-trading/eslint-config`, `package.json:26`), `eslint . --max-warnings 0` (`package.json:15`); disables carry `-- <reason>` (`src/server.ts:299`, `:330`); `CLAUDE.md` "## Invariants" (:63) and "### Dependency rules" (:43)
