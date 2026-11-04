@@ -62,11 +62,11 @@ see [Known limitations](#known-limitations).
 
 ```mermaid
 flowchart TD
-  A["ANY /proxy/{spacetraders-path}"] --> B["pick a lane: ask auth-service about the caller's token<br/>at most 250 ms, never rejects"]
-  B --> C{"credential mode<br/>from method + path"}
-  C -- "GET /" --> D["send no Authorization"]
-  C -- "POST /register" --> E["forward the caller's Authorization"]
-  C -- "anything else" --> F["get the agent token"]
+  A["ANY /proxy/{spacetraders-path}"] --> C{"credential mode<br/>from method + path"}
+  C -- "POST /register" --> E["forward the caller's Authorization<br/>background lane, auth-service never asked"]
+  C -- "GET /, or anything else" --> B["pick a lane: ask auth-service about the caller's bearer token<br/>(none: background, auth-service not asked), at most 250 ms, never rejects"]
+  B -- "GET /" --> D["send no Authorization"]
+  B -- "anything else" --> F["get the agent token"]
   F -- "none available" --> G["503"]
   F -- "token" --> H["inject the agent token"]
   D --> Q
@@ -295,10 +295,9 @@ Deliberate, not accidental:
   the process and never reset, so `avg` dilutes a bad minute forever; there are
   no percentiles and no Prometheus exposition format. `/health` and `/metrics`
   are open.
-- **Caller request headers other than `Content-Type` are dropped**, and only the
+- **Caller request headers other than `Content-Type` are dropped**
+  (`POST /register` also forwards the caller's `Authorization`), and only the
   pacing headers come back. This is a game-API proxy, not a general one.
-
-  Correction (2026-10-29): only Content-Type is forwarded, plus the caller's `Authorization` on POST `/register`, see src/server.ts:215,242-244.
 - **Response bodies are relayed as text.** SpaceTraders is JSON-only; a binary
   upstream body would be mangled.
 - **No circuit breaker.** A sustained SpaceTraders outage still queues and
