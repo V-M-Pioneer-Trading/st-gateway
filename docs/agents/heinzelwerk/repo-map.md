@@ -62,7 +62,7 @@ Verified against c35e565 2026-10-29.
 
 ## Patterns
 - `{error:{message}}` envelope. `src/server.ts:248`, `:324-326`, `:350-353`
-- Test fakes and `useHarness()`; `gw.app({maxRetries:0})`. `CLAUDE.md:41`, `:194-203`
+- Test fakes and `useHarness()`; `gw.app({maxRetries:0})`. `CLAUDE.md:41`, `:199-208`
 - Recipes for extending. `CLAUDE.md:251-271`
 - Regression test comment states the old behaviour. `CLAUDE.md:244-246`
 - Lint: shared `base`; eslint ^10.12.0 `package.json:27`, typescript-eslint ^8.71.0 `package.json:32`; `meta#105` `.github/workflows/container.yml:67`.
